@@ -1,0 +1,1223 @@
+{
+  "sources": [
+    {
+      "key": "openai-ashby",
+      "company": "OpenAI",
+      "provider": "ashby",
+      "organization": "openai"
+    },
+    {
+      "key": "stripe-greenhouse",
+      "company": "Stripe",
+      "provider": "greenhouse",
+      "boardToken": "stripe"
+    },
+    {
+      "key": "vercel-greenhouse",
+      "company": "Vercel",
+      "provider": "greenhouse",
+      "boardToken": "vercel"
+    },
+    {
+      "key": "palantir-lever",
+      "company": "Palantir",
+      "provider": "lever",
+      "site": "palantir"
+    },
+    {
+      "key": "smartrecruiters-demo",
+      "company": "SmartRecruiters",
+      "provider": "smartrecruiters",
+      "companyIdentifier": "smartrecruiters"
+    },
+    {
+      "key": "actionet-jobvite",
+      "company": "ActioNet",
+      "provider": "jobvite",
+      "site": "actionet"
+    },
+    {
+      "key": "ags-applytojob",
+      "company": "Ansible Government Solutions",
+      "provider": "applytojob",
+      "careersUrl": "https://ansiblegovernmentsolutions.applytojob.com/apply/jobs/"
+    },
+    {
+      "key": "grahampartners-applicantpro",
+      "company": "Graham Partners",
+      "provider": "applicantpro",
+      "careersUrl": "https://grahampartners.applicantpro.com/jobs/"
+    },
+    {
+      "key": "microsoft-careerpage",
+      "company": "Microsoft",
+      "provider": "careerpage",
+      "careersUrl": "https://apply.careers.microsoft.com/careers?start=0&sort_by=solr&filter_profession=product+management",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "expedia-group-careerpage",
+      "company": "Expedia Group",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.expediagroup.com/jobs/",
+      "jobSitemapUrl": "https://careers.expediagroup.com/jobs-sitemap.xml",
+      "sitemapJobPathPattern": "/job/",
+      "sitemapFormat": "job-title-location",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "zillow-careerpage",
+      "company": "Zillow",
+      "provider": "workday",
+      "host": "zillow.wd5.myworkdayjobs.com",
+      "tenant": "zillow",
+      "site": "Zillow_Group_External",
+      "careersUrl": "https://zillow.wd5.myworkdayjobs.com/Zillow_Group_External",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "redfin-careerpage",
+      "company": "Redfin",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.redfin.com/us/en/search-results",
+      "keywordSearchUrlTemplate": "https://careers.redfin.com/us/en/search-results?keywords={{keyword}}",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work.",
+      "htmlListStrategy": "phenom-ddo-jobs"
+    },
+    {
+      "key": "smartsheet-careerpage",
+      "company": "Smartsheet",
+      "provider": "careerpage",
+      "careersUrl": "https://www.smartsheet.com/careers-list",
+      "htmlTableStrategy": "smartsheet-careers-table",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "remitly-careerpage",
+      "company": "Remitly",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.remitly.com/job-search-results/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "highspot-lever",
+      "company": "Highspot",
+      "provider": "lever",
+      "site": "highspot",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "outreach-careerpage",
+      "company": "Outreach",
+      "provider": "lever",
+      "site": "outreach",
+      "careersUrl": "https://www.outreach.io/company/working-at-outreach",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "pitchbook-careerpage",
+      "company": "PitchBook",
+      "provider": "careerpage",
+      "careersUrl": "https://pitchbook.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "f5-careerpage",
+      "company": "F5",
+      "provider": "workday",
+      "host": "ffive.wd5.myworkdayjobs.com",
+      "tenant": "ffive",
+      "site": "f5jobs",
+      "careersUrl": "https://ffive.wd5.myworkdayjobs.com/f5jobs",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "avalara-careerpage",
+      "company": "Avalara",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.avalara.com/north-america/jobs",
+      "htmlListStrategy": "jibe-json-api-jobs",
+      "jsonApiUrl": "https://careers.avalara.com/api/jobs",
+      "jsonApiLimit": 100,
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "extrahop-careerpage",
+      "company": "ExtraHop",
+      "provider": "careerpage",
+      "careersUrl": "https://www.extrahop.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "possible-finance-careerpage",
+      "company": "Possible Finance",
+      "provider": "careerpage",
+      "careersUrl": "https://www.possiblefinance.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "google-careerpage",
+      "company": "Google",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.google.com/jobs",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "meta-careerpage",
+      "company": "Meta",
+      "provider": "careerpage",
+      "careersUrl": "https://www.metacareers.com/jobs/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "apple-careerpage",
+      "company": "Apple",
+      "provider": "careerpage",
+      "careersUrl": "https://jobs.apple.com/en-us/search",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "salesforce-careerpage",
+      "company": "Salesforce",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.salesforce.com/en/jobs/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "snowflake-careerpage",
+      "company": "Snowflake",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.snowflake.com/us/en/search-results",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "stripe-careerpage",
+      "company": "Stripe",
+      "provider": "careerpage",
+      "careersUrl": "https://stripe.com/jobs",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "shopify-careerpage",
+      "company": "Shopify",
+      "provider": "careerpage",
+      "careersUrl": "https://www.shopify.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "coinbase-careerpage",
+      "company": "Coinbase",
+      "provider": "careerpage",
+      "careersUrl": "https://www.coinbase.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "robinhood-careerpage",
+      "company": "Robinhood",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.robinhood.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "twilio-careerpage",
+      "company": "Twilio",
+      "provider": "careerpage",
+      "careersUrl": "https://jobs.twilio.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "okta-careerpage",
+      "company": "Okta",
+      "provider": "careerpage",
+      "careersUrl": "https://www.okta.com/company/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "docusign-careerpage",
+      "company": "DocuSign",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.docusign.com/jobs/categories",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "nordstrom-careerpage",
+      "company": "Nordstrom",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.nordstrom.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work.",
+      "keywordSearchUrlTemplate": "https://careers.nordstrom.com/jobs?keyword={{keyword}}"
+    },
+    {
+      "key": "t-mobile-careerpage",
+      "company": "T-Mobile",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.t-mobile.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "qualtrics-careerpage",
+      "company": "Qualtrics",
+      "provider": "careerpage",
+      "careersUrl": "https://www.qualtrics.com/careers/us/en",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "oracle-careerpage",
+      "company": "Oracle",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.oracle.com/en/sites/jobsearch",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "sap-concur-careerpage",
+      "company": "SAP Concur",
+      "provider": "careerpage",
+      "careersUrl": "https://jobs.sap.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "adobe-careerpage",
+      "company": "Adobe",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.adobe.com/us/en",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "cisco-careerpage",
+      "company": "Cisco",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.cisco.com/global/en",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "intel-careerpage",
+      "company": "Intel",
+      "provider": "careerpage",
+      "careersUrl": "https://jobs.intel.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "ibm-careerpage",
+      "company": "IBM",
+      "provider": "careerpage",
+      "careersUrl": "https://www.ibm.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "servicenow-careerpage",
+      "company": "ServiceNow",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.servicenow.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "databricks-careerpage",
+      "company": "Databricks",
+      "provider": "careerpage",
+      "careersUrl": "https://www.databricks.com/company/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "confluent-careerpage",
+      "company": "Confluent",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.confluent.io/jobs",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "mongodb-careerpage",
+      "company": "MongoDB",
+      "provider": "careerpage",
+      "careersUrl": "https://www.mongodb.com/company/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "elastic-careerpage",
+      "company": "Elastic",
+      "provider": "careerpage",
+      "careersUrl": "https://www.elastic.co/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "splunk-careerpage",
+      "company": "Splunk",
+      "provider": "careerpage",
+      "careersUrl": "https://www.splunk.com/en_us/careers.html",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "plaid-careerpage",
+      "company": "Plaid",
+      "provider": "careerpage",
+      "careersUrl": "https://plaid.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "block-careerpage",
+      "company": "Block",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.block.xyz/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "affirm-careerpage",
+      "company": "Affirm",
+      "provider": "careerpage",
+      "careersUrl": "https://www.affirm.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "carta-careerpage",
+      "company": "Carta",
+      "provider": "careerpage",
+      "careersUrl": "https://carta.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "gusto-careerpage",
+      "company": "Gusto",
+      "provider": "careerpage",
+      "careersUrl": "https://gusto.com/about/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "brex-careerpage",
+      "company": "Brex",
+      "provider": "careerpage",
+      "careersUrl": "https://www.brex.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "sofi-careerpage",
+      "company": "SoFi",
+      "provider": "careerpage",
+      "careersUrl": "https://www.sofi.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "whatnot-careerpage",
+      "company": "Whatnot",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.whatnot.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "headway-careerpage",
+      "company": "Headway",
+      "provider": "careerpage",
+      "careersUrl": "https://headway.co/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "anduril-careerpage",
+      "company": "Anduril",
+      "provider": "careerpage",
+      "careersUrl": "https://www.anduril.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "openai-careerpage",
+      "company": "OpenAI",
+      "provider": "careerpage",
+      "careersUrl": "https://openai.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "anthropic-careerpage",
+      "company": "Anthropic",
+      "provider": "careerpage",
+      "careersUrl": "https://www.anthropic.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "scale-ai-careerpage",
+      "company": "Scale AI",
+      "provider": "careerpage",
+      "careersUrl": "https://scale.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "xai-careerpage",
+      "company": "xAI",
+      "provider": "careerpage",
+      "careersUrl": "https://x.ai/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "allen-institute-for-ai-careerpage",
+      "company": "Allen Institute for AI",
+      "provider": "careerpage",
+      "careersUrl": "https://allenai.org/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "carbon-robotics-careerpage",
+      "company": "Carbon Robotics",
+      "provider": "careerpage",
+      "careersUrl": "https://carbonrobotics.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "octoai-careerpage",
+      "company": "OctoAI",
+      "provider": "careerpage",
+      "careersUrl": "https://octo.ai/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "temporal-careerpage",
+      "company": "Temporal",
+      "provider": "careerpage",
+      "careersUrl": "https://temporal.io/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "rec-room-careerpage",
+      "company": "Rec Room",
+      "provider": "careerpage",
+      "careersUrl": "https://recroom.com/jobs",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "bungie-careerpage",
+      "company": "Bungie",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.bungie.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "valve-careerpage",
+      "company": "Valve",
+      "provider": "careerpage",
+      "careersUrl": "https://www.valvesoftware.com/en/jobs",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "epic-games-careerpage",
+      "company": "Epic Games",
+      "provider": "careerpage",
+      "careersUrl": "https://www.epicgames.com/site/en-US/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "nintendo-careerpage",
+      "company": "Nintendo",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.nintendo.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "riot-games-careerpage",
+      "company": "Riot Games",
+      "provider": "careerpage",
+      "careersUrl": "https://www.riotgames.com/en/work-with-us",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "roblox-careerpage",
+      "company": "Roblox",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.roblox.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "electronic-arts-careerpage",
+      "company": "Electronic Arts",
+      "provider": "careerpage",
+      "careersUrl": "https://www.ea.com/careers/careers-overview",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "playstation-careerpage",
+      "company": "PlayStation",
+      "provider": "careerpage",
+      "careersUrl": "https://www.playstation.com/en-us/corporate/playstation-careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "unity-careerpage",
+      "company": "Unity",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.unity.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "chewy-careerpage",
+      "company": "Chewy",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.chewy.com/us/en",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "rover-careerpage",
+      "company": "Rover",
+      "provider": "careerpage",
+      "careersUrl": "https://www.rover.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "trupanion-careerpage",
+      "company": "Trupanion",
+      "provider": "careerpage",
+      "careersUrl": "https://trupanion.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "getty-images-careerpage",
+      "company": "Getty Images",
+      "provider": "careerpage",
+      "careersUrl": "https://www.gettyimages.com/company/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "porch-group-careerpage",
+      "company": "Porch Group",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.porchgroup.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "offerup-careerpage",
+      "company": "OfferUp",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.offerup.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "apptio-careerpage",
+      "company": "Apptio",
+      "provider": "careerpage",
+      "careersUrl": "https://www.apptio.com/company/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "slalom-careerpage",
+      "company": "Slalom",
+      "provider": "careerpage",
+      "careersUrl": "https://www.slalom.com/us/en/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "karat-careerpage",
+      "company": "Karat",
+      "provider": "careerpage",
+      "careersUrl": "https://karat.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "taxbit-careerpage",
+      "company": "TaxBit",
+      "provider": "careerpage",
+      "careersUrl": "https://www.taxbit.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "hiya-careerpage",
+      "company": "Hiya",
+      "provider": "careerpage",
+      "careersUrl": "https://www.hiya.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "amperity-careerpage",
+      "company": "Amperity",
+      "provider": "careerpage",
+      "careersUrl": "https://amperity.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "digitalocean-careerpage",
+      "company": "DigitalOcean",
+      "provider": "careerpage",
+      "careersUrl": "https://www.digitalocean.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "pagerduty-careerpage",
+      "company": "PagerDuty",
+      "provider": "careerpage",
+      "careersUrl": "https://www.pagerduty.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "tiktok-careerpage",
+      "company": "TikTok",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.tiktok.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "snap-careerpage",
+      "company": "Snap",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.snap.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "blue-origin-careerpage",
+      "company": "Blue Origin",
+      "provider": "careerpage",
+      "careersUrl": "https://www.blueorigin.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "tanium-careerpage",
+      "company": "Tanium",
+      "provider": "greenhouse",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work.",
+      "boardToken": "tanium"
+    },
+    {
+      "key": "icertis-careerpage",
+      "company": "Icertis",
+      "provider": "careerpage",
+      "careersUrl": "https://www.icertis.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "nintex-careerpage",
+      "company": "Nintex",
+      "provider": "careerpage",
+      "careersUrl": "https://www.nintex.com/company/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "blacksky-careerpage",
+      "company": "BlackSky",
+      "provider": "careerpage",
+      "careersUrl": "https://blacksky.com/company/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "read-ai-careerpage",
+      "company": "Read AI",
+      "provider": "careerpage",
+      "careersUrl": "https://www.read.ai/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "helion-careerpage",
+      "company": "Helion",
+      "provider": "careerpage",
+      "careersUrl": "https://www.helionenergy.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "chainguard-careerpage",
+      "company": "Chainguard",
+      "provider": "careerpage",
+      "careersUrl": "https://www.chainguard.dev/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "truveta-careerpage",
+      "company": "Truveta",
+      "provider": "careerpage",
+      "careersUrl": "https://www.truveta.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "statsig-careerpage",
+      "company": "Statsig",
+      "provider": "careerpage",
+      "careersUrl": "https://www.statsig.com/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "cloudflare-careerpage",
+      "company": "Cloudflare",
+      "provider": "careerpage",
+      "careersUrl": "https://www.cloudflare.com/careers/jobs/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "workday-careerpage",
+      "company": "Workday",
+      "provider": "careerpage",
+      "careersUrl": "https://workday.wd5.myworkdayjobs.com/Workday",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "veeam-careerpage",
+      "company": "Veeam",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.veeam.com/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "relationalai-careerpage",
+      "company": "RelationalAI",
+      "provider": "careerpage",
+      "careersUrl": "https://www.relational.ai/careers",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "echodyne-careerpage",
+      "company": "Echodyne",
+      "provider": "careerpage",
+      "careersUrl": "https://www.echodyne.com/careers/",
+      "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
+      "collectionKey": "seattle-tech",
+      "collectionLabel": "Seattle tech companies",
+      "collectionDescription": "Seattle-area tech employer career pages and job boards, including sources with stronger coverage and sources that still need deeper adapter work."
+    },
+    {
+      "key": "uw-medicine-healthcare",
+      "company": "UW Medicine",
+      "provider": "workday",
+      "host": "wd5.myworkdaysite.com",
+      "tenant": "uw",
+      "site": "UWHires",
+      "careersUrl": "https://wd5.myworkdaysite.com/recruiting/uw/UWHires",
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    },
+    {
+      "key": "seattle-childrens-healthcare",
+      "company": "Seattle Children's",
+      "provider": "careerpage",
+      "careersUrl": "https://careers.seattlechildrens.org/us/en/search-results",
+      "jobSitemapUrl": "https://careers.seattlechildrens.org/us/en/sitemap.xml",
+      "sitemapJobPathPattern": "/us/en/job/",
+      "sitemapFormat": "phenom-job-id-title",
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    },
+    {
+      "key": "fred-hutch-healthcare",
+      "company": "Fred Hutch",
+      "provider": "careerpage",
+      "careersUrl": "https://careers-fhcrc.icims.com/jobs/search?ss=1&in_iframe=1",
+      "keywordSearchUrlTemplate": "https://careers-fhcrc.icims.com/jobs/search?ss=1&in_iframe=1&searchKeyword={{keyword}}&searchLocation={{location}}",
+      "htmlListStrategy": "icims-search-results",
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    },
+    {
+      "key": "evergreenhealth-healthcare",
+      "company": "EvergreenHealth",
+      "provider": "jobvite",
+      "site": "evergreenhealth",
+      "careersUrl": "https://careers.evergreenhealth.com/search/jobs",
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    },
+    {
+      "key": "providence-swedish-healthcare",
+      "company": "Providence Swedish",
+      "provider": "careerpage",
+      "careersUrl": "https://providenceswedish.jobs/all-careers/",
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources",
+      "keywordSearchUrlTemplate": "https://providenceswedish.jobs/jobs/?q={{keyword}}&location={{location}}",
+      "jobSitemapUrl": "https://providenceswedish.jobs/sitemaps/jobs_1.xml"
+    },
+    {
+      "key": "vmfh-healthcare",
+      "company": "Virginia Mason Franciscan Health",
+      "provider": "careerpage",
+      "careersUrl": "https://www.commonspirit.careers/virginia-mason-medical-center",
+      "jobSitemapUrl": "https://www.commonspirit.careers/sitemap.xml",
+      "sitemapJobPathPattern": "/job/",
+      "sitemapFormat": "job-location-title",
+      "sitemapAllowedLocationSlugs": [
+        "arlington",
+        "auburn",
+        "burien",
+        "des-moines",
+        "edmonds",
+        "federal-way",
+        "gig-harbor",
+        "lakewood",
+        "puyallup",
+        "seattle",
+        "silverdale",
+        "tacoma",
+        "university-place"
+      ],
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    },
+    {
+      "key": "kaiser-washington-healthcare",
+      "company": "Kaiser Permanente Washington",
+      "provider": "careerpage",
+      "careersUrl": "https://www.kaiserpermanentejobs.org/location/seattle-jobs/641/6252001-5815135-5809844/4",
+      "htmlListStrategy": "talentbrew-search-results",
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    },
+    {
+      "key": "king-county-public-health",
+      "company": "Public Health - Seattle & King County",
+      "provider": "careerpage",
+      "careersUrl": "https://www.governmentjobs.com/careers/kingcounty?department[0]=DPH%20-%20Public%20Health",
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources",
+      "htmlListStrategy": "govjobs-ajax-results",
+      "govjobsAgency": "kingcounty",
+      "govjobsDepartmentNameIncludes": "DPH - Public Health",
+      "disableAnchorFallback": true
+    },
+    {
+      "key": "wa-department-of-health",
+      "company": "Washington State Department of Health",
+      "provider": "careerpage",
+      "careersUrl": "https://www.governmentjobs.com/careers/washington/doh",
+      "htmlListStrategy": "govjobs-ajax-results",
+      "govjobsAgency": "washington",
+      "govjobsDepartment": "doh",
+      "disableAnchorFallback": true,
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    },
+    {
+      "key": "wa-health-care-authority",
+      "company": "Washington State Health Care Authority",
+      "provider": "careerpage",
+      "careersUrl": "https://www.governmentjobs.com/careers/washington/hca",
+      "htmlListStrategy": "govjobs-ajax-results",
+      "govjobsAgency": "washington",
+      "govjobsDepartment": "hca",
+      "disableAnchorFallback": true,
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    },
+    {
+      "key": "seattle-indian-health-board",
+      "company": "Seattle Indian Health Board",
+      "provider": "careerpage",
+      "careersUrl": "https://secure7.saashr.com/ta/6202620.careers?CareersSearch=&lang=en-US",
+      "htmlListStrategy": "saashr-rest-job-requisitions",
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources",
+      "disableAnchorFallback": true
+    },
+    {
+      "key": "ichs-healthcare",
+      "company": "International Community Health Services",
+      "provider": "careerpage",
+      "careersUrl": "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=f9f16fc4-23e6-4f82-91f5-062e4fb5ef4f&ccId=19000101_000001&source=CC2&lang=en_US&selectedMenuKey=CareerCenter",
+      "disableAnchorFallback": true,
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources",
+      "htmlListStrategy": "adp-public-job-requisitions"
+    },
+    {
+      "key": "neighborcare-health",
+      "company": "Neighborcare Health",
+      "provider": "ultipro",
+      "careersUrl": "https://recruiting.ultipro.com/NEI1003/JobBoard/05b8e5e2-a441-f1ac-02fd-234422e71609/?q=&o=postedDateDesc",
+      "htmlListStrategy": "ultipro-joboptions",
+      "collectionKey": "seattle-healthcare",
+      "collectionLabel": "Seattle healthcare employers",
+      "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    }
+  ]
+}

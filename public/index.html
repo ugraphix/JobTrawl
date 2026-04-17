@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>JobTrawl</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <p class="eyebrow">Job Search Console</p>
+        <h1>JobTrawl</h1>
+        <p class="hero-copy">
+          Search ATS sources and employer career pages in one place, filter by keyword, date, work arrangement, and location, and surface direct job listings from the companies you want to track.
+        </p>
+      </header>
+
+      <main class="layout">
+        <section class="panel filters-panel">
+          <form id="search-form" class="filters-form">
+            <label>
+              <span>Keyword or title</span>
+              <input id="keyword" name="keyword" type="text" placeholder="Product Manager, Platform, Growth...">
+            </label>
+
+            <label>
+              <span>Posted within</span>
+              <select id="recency" name="recency">
+                <option value="" selected>Choose timeframe</option>
+                <option value="24h">Last 24 hours</option>
+                <option value="3d">Last 3 days</option>
+                <option value="7d">Last 7 days</option>
+                <option value="14d">Last 2 weeks</option>
+                <option value="30d">Last month</option>
+              </select>
+            </label>
+
+            <fieldset>
+              <legend>Work arrangement</legend>
+              <div id="arrangements" class="checkbox-grid compact-grid"></div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Location mode</legend>
+              <div class="checkbox-grid location-mode-grid">
+                <label class="checkbox-item">
+                  <input type="radio" name="locationMode" value="none">
+                  <span>No location filter</span>
+                </label>
+                <label class="checkbox-item">
+                  <input type="radio" name="locationMode" value="manual">
+                  <span>Use manual location</span>
+                </label>
+                <label class="checkbox-item">
+                  <input type="radio" name="locationMode" value="my_location">
+                  <span>Use my location</span>
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset id="manual-location-section" class="hidden-section" hidden>
+              <legend>Manual locations</legend>
+              <div id="location-groups" class="location-groups"></div>
+            </fieldset>
+
+            <fieldset id="my-location-section" class="hidden-section" hidden>
+              <legend>My location</legend>
+              <div id="location-mode-note" class="muted-copy">Allow browser location access to use your current area.</div>
+              <label>
+                <span>Distance</span>
+                <select id="distanceMiles" name="distanceMiles" disabled>
+                  <option value="">Choose a distance</option>
+                  <option value="3">3 miles</option>
+                  <option value="5">5 miles</option>
+                  <option value="10">10 miles</option>
+                  <option value="15">15 miles</option>
+                  <option value="20">20 miles</option>
+                </select>
+              </label>
+            </fieldset>
+
+            <fieldset id="excludeCompaniesFieldset" class="filter-fieldset">
+              <legend>Exclude companies</legend>
+              <div class="filter-group">
+                <div class="filter-toolbar" hidden>
+                  <button type="button" class="text-button" data-group-action="select-all" data-target="excludedCompanies">Select all</button>
+                  <button type="button" class="text-button" data-group-action="clear-all" data-target="excludedCompanies">Clear all</button>
+                </div>
+                <details class="filter-dropdown">
+                  <summary>
+                    <span class="dropdown-label">Choose companies</span>
+                    <span id="excludedCompaniesCount" class="dropdown-count">0 selected</span>
+                  </summary>
+                  <div class="dropdown-panel">
+                    <div id="excludedCompanies" class="checkbox-grid tall-grid"></div>
+                  </div>
+                </details>
+              </div>
+            </fieldset>
+
+            <div class="section-divider"></div>
+
+            <fieldset id="customizeSearchFieldset" class="filter-fieldset">
+              <legend>Customize search</legend>
+              <label class="checkbox-item">
+                <input id="enableSourceCustomization" type="checkbox">
+                <span>Choose search source types</span>
+              </label>
+            </fieldset>
+
+            <fieldset id="atsSourcesFieldset" class="filter-fieldset hidden-section" hidden>
+              <legend>
+                <label class="legend-toggle">
+                  <input id="searchAtsSources" type="checkbox" checked>
+                  <span>ATS/API sources</span>
+                </label>
+              </legend>
+              <div id="atsSourcesContent" class="filter-group">
+                <div class="filter-toolbar" hidden>
+                  <button type="button" class="text-button" data-group-action="select-all" data-target="atsSourceKeys">Select all</button>
+                  <button type="button" class="text-button" data-group-action="clear-all" data-target="atsSourceKeys">Clear all</button>
+                </div>
+                <details class="filter-dropdown">
+                  <summary>
+                    <span class="dropdown-label">Choose sources</span>
+                    <span id="atsSourcesCount" class="dropdown-count">0 selected</span>
+                  </summary>
+                  <div class="dropdown-panel">
+                    <div id="atsSourceKeys" class="checkbox-grid tall-grid"></div>
+                  </div>
+                </details>
+              </div>
+            </fieldset>
+
+            <fieldset id="additionalSourcesFieldset" class="filter-fieldset hidden-section" hidden>
+              <legend>
+                <label class="legend-toggle">
+                  <input id="searchAdditionalSources" type="checkbox" checked>
+                  <span>Additional sources</span>
+                </label>
+              </legend>
+              <div id="additionalSourcesContent">
+                <select id="websiteCollectionKey" name="websiteCollectionKey">
+                  <option value="">None</option>
+                </select>
+                <div id="websiteSourcesGroup" class="filter-group" hidden>
+                  <div id="websiteCollectionDescription" class="muted-copy"></div>
+                  <div class="filter-toolbar" hidden>
+                    <button type="button" class="text-button" data-group-action="select-all" data-target="websiteSourceKeys">Select all</button>
+                    <button type="button" class="text-button" data-group-action="clear-all" data-target="websiteSourceKeys">Clear all</button>
+                  </div>
+                  <details id="websiteSourcesDropdown" class="filter-dropdown">
+                    <summary>
+                      <span class="dropdown-label">Choose websites</span>
+                      <span id="websiteSourcesCount" class="dropdown-count">0 selected</span>
+                    </summary>
+                    <div class="dropdown-panel">
+                      <div id="websiteSourceKeys" class="checkbox-grid tall-grid"></div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </fieldset>
+
+            <fieldset id="syncFieldset" class="filter-fieldset">
+              <legend>Source sync</legend>
+              <div class="sync-controls">
+                <button id="syncSourcesButton" class="secondary-button" type="button">Sync sources</button>
+                <div id="cacheStatus" class="muted-copy"></div>
+              </div>
+            </fieldset>
+
+            <button class="search-button" type="submit">Search jobs</button>
+          </form>
+        </section>
+
+        <section class="panel results-panel">
+          <div class="results-toolbar">
+            <div>
+              <p class="toolbar-label">Results</p>
+              <h2 id="results-count">Run a search to load jobs</h2>
+            </div>
+            <div id="status-pill" class="status-pill">Idle</div>
+          </div>
+
+          <div id="summary" class="summary"></div>
+          <div id="source-health" class="source-health"></div>
+          <div id="results" class="results-list empty-state">
+            Choose filters and run a search. The tool will aggregate configured ATS boards and show the newest matches first.
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

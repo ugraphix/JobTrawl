@@ -1,0 +1,5 @@
+﻿{
+  "opportunities": [],
+  "totalCount": 0,
+  "locations": []
+}

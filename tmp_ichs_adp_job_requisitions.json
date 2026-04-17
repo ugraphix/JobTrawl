@@ -1,0 +1,135 @@
+﻿<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+
+<HEAD>
+    <TITLE>Federation Redirector</TITLE>
+    <meta charset="utf-8">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <script language="JavaScript">
+        var random = Math.ceil(Math.random() * 1000000);
+        var srcjs = "OlpLandingConfig.js?" + random;
+        document.write("<script type='text/javascript' src=" + srcjs + "><\/script>");
+    </script>
+
+    <script language="JavaScript">
+        {
+            var flCon;
+            var ieVersionCheck = ieVersion();
+            if (ieVersionCheck == '7' || ieVersionCheck == '8' || ieVersionCheck == '9' || ieVersionCheck == '10' || ieVersionCheck == '11') {
+                flCon = false;
+                var strLocale = getCookie("ADPLangLocaleCookie");
+                console.log(strLocale);
+                if (strLocale != null && strLocale != undefined && strLocale.trim().length > 0) {
+                    window.location.href = "https://".concat(document.domain).concat("/aim/error/unsupportedbrowser_".concat(strLocale.trim()).concat(".html"));
+                } else {
+                    window.location.href = "https://".concat(document.domain).concat("/aim/error/unsupportedbrowser.html")
+                }
+            } else {
+                flCon = true;
+            }
+            if (flCon == true) {
+                var appId = getParameterByName('APPID');
+                var deepLinkUrl = getParameterByName('TARGET');
+                var returnURL = getReturnURL(appId.toUpperCase());
+                var orgId = getParameterByName('alias');
+                var removeParamsCSV = 'APPID,productId,returnURL,callingAppId,TARGET,TYPE,REALMOID,GUID,SMAUTHREASON,METHOD,SMAGENTNAME';
+                var browserUrl = window.location.search;
+                var removeParams = removeParamsCSV.split(',');
+                var queryStringBuilder = "";
+                if (browserUrl != undefined) {
+                    var urlParameters = browserUrl.split('&');
+
+
+                    for (i = 0; i < urlParameters.length; i++) {
+                        var paramNameFound = false;
+                        for (j = 0; j < removeParams.length; j++) {
+                            if (urlParameters[i].indexOf(removeParams[j]) != -1) {
+                                paramNameFound = true;
+                                break;
+
+                            }
+                            else {
+                                continue;
+                            }
+                        }
+                        //console.log("Iteration "+i+paramNameFound);
+                        if (paramNameFound == false) {
+                            queryStringBuilder = queryStringBuilder + "&" + urlParameters[i];
+                        }
+                    }
+                    //console.log(queryStringBuilder);
+                }
+
+                if (deepLinkUrl != undefined && deepLinkUrl !== "" && deepLinkUrl.length > 0) {
+
+                    deepLinkUrl = decodeURIComponent(deepLinkUrl);
+                    // SiteMinder adds extra '-' to all '-' characters
+                    deepLinkUrl = deepLinkUrl.replace(/(--)+/g, '-');
+                    returnURL = queryStringUrlReplacement(returnURL, 'TARGET', deepLinkUrl);
+
+
+
+                }
+                if (orgId != undefined && orgId !== "" && orgId.length > 0 && appId != undefined && appId.length > 0) {
+
+
+                    returnURL = returnURL + "&organizationId=" + orgId.toUpperCase();
+
+                }
+                if (queryStringBuilder.length > 0) {
+                    returnURL = returnURL + decodeURIComponent(queryStringBuilder);
+                }
+
+                if (returnURL == appId)
+                    returnURL = "https://" + window.location.host;
+
+                window.location.href = returnURL;
+            }
+        }
+        function ieVersion() {
+            var ua = window.navigator.userAgent;
+            var msie = ua.indexOf('MSIE ');
+            if (msie > 0) {
+                // IE 10 or older => return version number
+                return parseInt(ua.substring(msie + 5, ua.indexOf('.', msie)), 10);
+            }
+
+            var trident = ua.indexOf('Trident/');
+            if (trident > 0) {
+                // IE 11 => return version number
+                var rv = ua.indexOf('rv:');
+                return parseInt(ua.substring(rv + 3, ua.indexOf('.', rv)), 10);
+            }
+
+            var edge = ua.indexOf('Edge/');
+            if (edge > 0) {
+                // Edge (IE 12+) => return version number
+                return parseInt(ua.substring(edge + 5, ua.indexOf('.', edge)), 10);
+            }
+
+            // other browser
+            return false;
+        }
+
+        function getCookie(cookiename) {
+            var d = document.cookie.split(";");
+            for (var i = 0; i < d.length; i++) {
+                var cookielist = d[i].split("=");
+                if (cookiename == cookielist[0].trim()) {
+
+                    return decodeURIComponent(cookielist[1]);
+                }
+            }
+            return null;
+
+        }
+    </script>
+</HEAD>
+
+<BODY>
+</BODY>
+
+</HTML>

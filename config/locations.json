@@ -1,0 +1,74 @@
+{
+  "states": [
+    {
+      "code": "WA",
+      "name": "Washington",
+      "areas": ["Seattle", "Bellevue", "Redmond", "Kirkland", "Tacoma", "Everett"]
+    },
+    {
+      "code": "CA",
+      "name": "California",
+      "areas": ["San Francisco", "San Jose", "Mountain View", "Palo Alto", "Los Angeles", "San Diego"]
+    },
+    {
+      "code": "NY",
+      "name": "New York",
+      "areas": ["New York City", "Brooklyn", "Queens", "Albany"]
+    },
+    {
+      "code": "TX",
+      "name": "Texas",
+      "areas": ["Austin", "Dallas", "Houston"]
+    },
+    {
+      "code": "MA",
+      "name": "Massachusetts",
+      "areas": ["Boston", "Cambridge"]
+    },
+    {
+      "code": "IL",
+      "name": "Illinois",
+      "areas": ["Chicago"]
+    },
+    {
+      "code": "CO",
+      "name": "Colorado",
+      "areas": ["Denver", "Boulder"]
+    },
+    {
+      "code": "GA",
+      "name": "Georgia",
+      "areas": ["Atlanta"]
+    },
+    {
+      "code": "FL",
+      "name": "Florida",
+      "areas": ["Miami", "Tampa"]
+    },
+    {
+      "code": "NC",
+      "name": "North Carolina",
+      "areas": ["Raleigh", "Charlotte"]
+    },
+    {
+      "code": "OR",
+      "name": "Oregon",
+      "areas": ["Portland"]
+    },
+    {
+      "code": "PA",
+      "name": "Pennsylvania",
+      "areas": ["Philadelphia", "Pittsburgh"]
+    },
+    {
+      "code": "VA",
+      "name": "Virginia",
+      "areas": ["Arlington", "Reston"]
+    },
+    {
+      "code": "DC",
+      "name": "District of Columbia",
+      "areas": ["Washington"]
+    }
+  ]
+}
