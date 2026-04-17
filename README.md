@@ -1,42 +1,315 @@
-# ATS Job Aggregator
+# JobTrawl
 
-A lightweight local web app that searches across configured ATS-backed career pages and normalizes results into one filterable list. It includes custom sources for tech and healthcare companies, and excludes aggregator sites like LinkedIn, Indeed, and Glassdoor to avoid ads, reposted, and ghost listings from for-profit platforms that treat users as the product.
+JobTrawl is a local-first job search app that aggregates direct job listings from employer career pages and ATS job boards into one searchable interface. Instead of relying on job aggregators like LinkedIn or Indeed, it pulls openings from company-controlled sources, normalizes the results into a shared format, caches them locally, and lets you filter the combined list in one place.
 
-## What it does
+It is designed for two kinds of coverage:
 
-- Searches multiple public ATS job feeds in one request
-- Filters by job title or keyword text
-- Limits results to jobs posted within `24h`, `3d`, `7d`, `14d`, or `30d`
-- Lets users pick work arrangements with checkboxes for `remote`, `hybrid`, and `onsite`
-- Lets users narrow hybrid and onsite roles by `state` and `city or area`
-- Lets users exclude companies with checkbox filters, including starter options such as `Amazon`, `Microsoft`, `Expedia`, `Meta`, and `Google`
-- Lets users choose which configured ATS sources to include in a given search
-- Returns partial results when some job boards are slow instead of leaving the UI stuck in `Searching`
+- Curated sources you hand-pick in `config/sources.json`
+- Large generated ATS inventories imported into `config/openpostings-sources.json`
 
-## Supported ATS adapters
+The result is a local search console that can cover both carefully chosen employers and much broader ATS ecosystems.
 
-This project now supports these ATS families:
+## What JobTrawl does
 
-- `Greenhouse` via public board API
-- `Lever` via public postings API
-- `Ashby` via public job board API
-- `SmartRecruiters` via public postings API
-- `Workable` via public jobs endpoint
-- `Recruitee` via public offers API
-- `Jobvite` via hosted careers page parsing
-- `ApplicantPro` via hosted careers page parsing
-- `ApplyToJob / JazzHR` via hosted careers page parsing
-- `Taleo` via RSS feed or hosted careers page parsing
-- `UltiPro / UKG` via hosted careers page parsing
-- `iCIMS` via authenticated search endpoint
+- Searches many employer job sources in one request
+- Uses direct ATS APIs when they are available
+- Falls back to parsing public employer career pages when there is no clean public API
+- Normalizes results from different systems into one shared job shape
+- Caches fetched jobs locally in SQLite for faster repeat searches
+- Deduplicates and sorts matches across sources
+- Returns partial results if some sources fail or time out
+- Lets you narrow results by title, date, work arrangement, location, and excluded companies
 
-Important: there is no universal public API that lists every job from every ATS. In practice, this tool searches the company boards you configure in `config/sources.json`.
+## How it works
 
-## Configure sources
+At a high level, JobTrawl does four things:
 
-Edit `config/sources.json` and add the companies you want to search.
+1. Loads source definitions from `config/sources.json` and `config/openpostings-sources.json`
+2. Fetches jobs from each source using an adapter for that ATS or career-page pattern
+3. Stores normalized jobs in a local cache database under `data/jobs-cache.sqlite`
+4. Applies search filters and returns one unified results list to the UI
 
-Example entries:
+### Search flow
+
+```mermaid
+flowchart TD
+    A["User opens JobTrawl UI"] --> B["GET /api/bootstrap"]
+    B --> C["Load sources and location config"]
+    C --> D["Show filters in the browser"]
+
+    D --> E["User submits search"]
+    E --> F["POST /api/search"]
+    F --> G["Merge curated + generated source config"]
+    G --> H["Select enabled source groups"]
+    H --> I["Load cached jobs when available"]
+    I --> J{"Fresh cache exists?"}
+
+    J -->|Yes| K["Read normalized jobs from SQLite cache"]
+    J -->|No| L["Fetch source through provider adapter"]
+
+    L --> M{"ATS/API or public career page?"}
+    M -->|ATS/API| N["Call provider endpoint and map response"]
+    M -->|Career page| O["Fetch public HTML / sitemap / embedded JSON and extract jobs"]
+
+    N --> P["Normalize jobs into shared structure"]
+    O --> P
+    P --> Q["Write jobs to local cache"]
+    Q --> R["Apply keyword, recency, arrangement, U.S., location, distance, and exclusion filters"]
+    K --> R
+    R --> S["Deduplicate and sort newest first"]
+    S --> T["Return jobs + per-source health to UI"]
+```
+
+## Filters
+
+The UI in `public/index.html` and `public/app.js` supports these filters:
+
+- `Keyword or title`
+- `Strict keyword search` or `Loose keyword search`
+- `Posted within`: `24h`, `3d`, `7d`, `14d`, `30d`
+- `Work arrangement`: `remote`, `hybrid`, `onsite`
+- `Location mode`
+- `No location filter`
+- `Use manual location`
+- `Use my location`
+- `U.S. jobs only`
+- Manual state + city/area groups from `config/locations.json`
+- Distance from your detected browser location
+- Excluded companies
+- Source customization by ATS/provider type
+
+### How the filters behave
+
+- Keyword matching can run in strict or loose mode.
+- Loose matching expands many common role aliases. For example, a query like `product manager` can also match nearby role variants defined in `src/lib/filters.js`.
+- Recency uses `postedAt` when available.
+- Arrangement filtering normalizes values to `remote`, `hybrid`, `onsite`, or `unknown`.
+- Location filtering is text-based unless the distance filter is active.
+- The distance filter uses browser coordinates plus a built-in location alias map for supported metros.
+- `U.S. jobs only` keeps postings that clearly look U.S.-based and can optionally keep unknown-location jobs in a separate section.
+- Excluded companies are filtered out after normalization.
+- Results are deduplicated by source, company, title, location, and arrangement.
+
+## Source strategies
+
+JobTrawl uses adapters in `src/lib/adapters/` to fetch jobs. Those adapters generally fall into two buckets.
+
+### 1. Direct ATS / public API integrations
+
+When an ATS exposes a stable endpoint, JobTrawl calls that endpoint directly and converts the response into a common internal shape.
+
+Examples in this repo include:
+
+- `Greenhouse` via `https://boards-api.greenhouse.io/...`
+- `Lever` via `https://api.lever.co/...`
+- `Workday` via `.../wday/cxs/.../jobs`
+- `Ashby`
+- `SmartRecruiters`
+- `Workable`
+- `Recruitee`
+- `Breezy`
+- `Teamtailor`
+- `Zoho`
+- many other ATS-specific adapters now included under `src/lib/adapters/`
+
+What this approach is doing:
+
+- Sending HTTP requests to a provider-specific job endpoint
+- Paging through results when needed
+- Pulling fields like title, location, department, posted date, apply URL, and job description
+- Converting each provider response into a shared normalized job object
+
+This is the cleanest and most reliable path because the source data is already structured.
+
+### 2. Public career-page parsing and scraping
+
+Some employers expose jobs only through public website pages instead of a reusable anonymous API. In those cases, JobTrawl fetches the public career page and extracts jobs from the markup or embedded page data.
+
+This logic lives mostly in `src/lib/adapters/hosted-board.js`.
+
+What this approach is doing:
+
+- Downloading public HTML from a careers page
+- Checking for structured job data such as:
+- JSON-LD job postings
+- embedded preload state
+- ATS-specific inline JSON blobs
+- Phenom or similar embedded datasets
+- job sitemaps
+- provider-specific HTML list layouts
+- Falling back to link extraction when a page looks like a job list but does not expose a cleaner data structure
+- Filtering out non-job links like login pages, blog pages, talent networks, privacy pages, and generic careers landing pages
+- Optionally opening some job detail pages to enrich missing posted dates
+
+This is effectively "scraping" public employer career pages, but it is focused on publicly visible job content and tries structured data first before falling back to looser HTML parsing.
+
+### Why both approaches matter
+
+There is no single public API for every ATS and every employer website. JobTrawl mixes API adapters with public-page extraction so it can cover both:
+
+- ATS platforms with usable public endpoints
+- employer-hosted career sites that only expose jobs through HTML, embedded JSON, or sitemaps
+
+That hybrid approach is the main reason the project can support a wide range of sources.
+
+## Normalization and filtering pipeline
+
+Regardless of where a job comes from, adapters try to normalize it into a common structure with fields such as:
+
+- source key
+- company
+- provider
+- title
+- department or team
+- location label
+- city / region / country
+- work arrangement
+- posted / updated timestamps
+- apply URL
+- description snippet
+- search text
+- employment type
+- compensation
+
+After normalization, `src/lib/search.js` applies the search filters, counts matches per source, sorts jobs by date, and deduplicates the final list.
+
+## Local cache
+
+JobTrawl caches jobs on disk so searches do not always need to refetch every source.
+
+- Primary cache: `data/jobs-cache.sqlite`
+- Fallback cache: `data/jobs-cache.json` if SQLite is unavailable
+
+Cache behavior:
+
+- Each source has sync state and last error tracking
+- Stale sources can be refreshed
+- Searches can reuse fresh cached results
+- Generated inventory sources are included by default only after they have been synced locally
+- Expired postings are pruned automatically
+
+There are also API endpoints for cache status and manual sync:
+
+- `GET /api/cache/status`
+- `POST /api/cache/sync`
+
+## Source configuration
+
+JobTrawl merges two source files:
+
+- `config/sources.json`: curated, hand-maintained sources
+- `config/openpostings-sources.json`: generated ATS inventory
+
+On the current branch, the repo contains:
+
+- about `120` curated sources
+- about `10,186` generated ATS sources
+
+Generated inventory is created from the imported OpenPostings reference database using:
+
+- `npm run import:openpostings`
+
+and can be synced into the local cache in batches with:
+
+- `npm run sync:generated-ats`
+
+## Supported provider families
+
+The adapter registry currently includes support for:
+
+- `Greenhouse`
+- `Lever`
+- `Workday`
+- `Ashby`
+- `SmartRecruiters`
+- `Workable`
+- `Recruitee`
+- `Jobvite`
+- `ApplicantPro`
+- `ApplyToJob / JazzHR`
+- `iCIMS`
+- `UltiPro / UKG`
+- `Taleo`
+- `BambooHR`
+- `BreezyHR`
+- `ApplicantAI`
+- `Career Plug`
+- `Career Puck`
+- `Fountain`
+- `Gem`
+- `Getro`
+- `HRM Direct`
+- `Jobaps`
+- `JOIN`
+- `Manatal`
+- `SAP HR Cloud`
+- `Talent Lyft`
+- `Talent Reef`
+- `Talexio`
+- `Team Tailor`
+- `The Applicant Manager`
+- `Zoho Recruit`
+- generic `Career Page` extraction for public employer sites
+
+Coverage quality varies by provider and by company implementation. API-backed adapters are usually the most stable. Career-page extraction is broader but more fragile because employers can change their HTML at any time.
+
+## Installation
+
+### Requirements
+
+- `Node.js 20+`
+- `npm`
+- Internet access for fetching job listings from public endpoints and career pages
+
+### Download
+
+```powershell
+git clone https://github.com/<your-account>/JobTrawl.git
+cd JobTrawl
+```
+
+### Install
+
+```powershell
+npm install
+```
+
+### Run
+
+```powershell
+npm start
+```
+
+If PowerShell blocks `npm`, use:
+
+```powershell
+npm.cmd install
+npm.cmd start
+```
+
+Then open [http://localhost:3000](http://localhost:3000).
+
+### Development mode
+
+```powershell
+npm run dev
+```
+
+## Basic usage
+
+1. Start the app with `npm start`
+2. Open `http://localhost:3000`
+3. Enter a keyword or role title
+4. Choose recency, arrangement, and location filters
+5. Optionally exclude companies
+6. Run the search
+7. Open the direct application link from a result card
+
+## Configuring your own sources
+
+Add or edit entries in `config/sources.json`.
+
+Example:
 
 ```json
 {
@@ -58,59 +331,49 @@ Example entries:
 
 ```json
 {
-  "key": "actionet-jobvite",
-  "company": "ActioNet",
-  "provider": "jobvite",
-  "site": "actionet"
+  "key": "example-careerpage",
+  "company": "Example Co",
+  "provider": "careerpage",
+  "careersUrl": "https://example.com/careers"
 }
 ```
 
-Provider-specific fields:
+Provider-specific fields vary by adapter. A few common examples:
 
 - `greenhouse`: `boardToken`
 - `lever`: `site`
 - `ashby`: `organization`
+- `workday`: `host`, `tenant`, `site`
 - `smartrecruiters`: `companyIdentifier`
 - `workable`: `subdomain`
 - `recruitee`: `subdomain`
 - `jobvite`: `site` or `careersUrl`
-- `applicantpro`: `careersUrl`
-- `applytojob`: `careersUrl`
-- `taleo`: `rssUrl` or `careersUrl`
-- `ultipro`: `careersUrl`
-- `icims`: `customerId`, `portalId` or `portalName`, `username`, `password`
+- `careerpage`: `careersUrl` plus optional parsing hints
+- `icims`: source-specific credentials or portal details when required
 
-## Notes on coverage
+## Project structure
 
-- `Recruitee`, `Greenhouse`, `Lever`, `Ashby`, `SmartRecruiters`, and many `Workable` boards are the cleanest integrations because they expose stable public job data.
-- `Jobvite`, `ApplicantPro`, `ApplyToJob`, `UltiPro`, and many `Taleo` implementations are often company-hosted pages rather than a universal anonymous API, so this project reads their public career pages or feeds instead.
-- `iCIMS` has an official API, but it requires customer-specific authentication.
-
-## Configure locations
-
-Edit `config/locations.json` to expand the available state and area dropdown options.
-
-## Run locally
-
-If PowerShell blocks `npm`, use `npm.cmd` instead.
-
-```powershell
-npm.cmd start
+```text
+config/                     Source and location configuration
+data/                       Local cache database and logs
+public/                     Browser UI
+scripts/                    Source import and sync helpers
+src/server.js               HTTP server and API routes
+src/lib/search.js           Search pipeline
+src/lib/filters.js          Keyword, recency, arrangement, and location filters
+src/lib/cache-db.js         Local cache layer
+src/lib/adapters/           ATS and career-page adapters
 ```
 
-Then open [http://localhost:3000](http://localhost:3000).
+## Notes and tradeoffs
 
-## Notes
+- There is no universal public jobs API for every company or ATS.
+- Some boards expose rich structured APIs; others require HTML parsing.
+- Career-page scraping is inherently more brittle than API integrations.
+- Posted dates are not always available; JobTrawl can keep unknown-date jobs in separate sections.
+- Work arrangement and location metadata are inconsistent across employers, so normalization is best-effort.
+- Source failures do not block the whole search; the app returns partial results when possible.
 
-- Slow sources now time out so the app can still show partial results.
-- The `Distance` control is currently disabled while the search path is stabilized. State and area matching is active now.
-- Location matching is text-based for speed and consistency.
+## Summary
 
-## Suggested next improvements
-
-- Reintroduce a precise distance filter with a cached geolocation layer
-- Add persistence for saved searches and excluded companies
-- Import company source lists from CSV
-- Add adapter autodetection from a pasted careers URL
-- Cache ATS responses on disk
-- Export results to CSV
+JobTrawl is essentially a local job-ingestion and filtering engine for direct employer listings. It mixes provider APIs with public career-page scraping, converts everything into one normalized format, caches the results locally, and gives you a single UI to search across both curated and large generated ATS inventories.
