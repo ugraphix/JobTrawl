@@ -1,6 +1,6 @@
 import { inferWorkArrangement, normalizeCompany, toIsoDate } from "../filters.js";
 
-const DEFAULT_FETCH_TIMEOUT_MS = 20000;
+const DEFAULT_FETCH_TIMEOUT_MS = 45000;
 
 export async function fetchJson(url, options = {}) {
   const response = await fetch(url, {

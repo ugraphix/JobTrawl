@@ -20,6 +20,7 @@ const excludeCompaniesFieldsetNode = document.querySelector("#excludeCompaniesFi
 const additionalSourcesFieldsetNode = document.querySelector("#additionalSourcesFieldset");
 const additionalSourcesContentNode = document.querySelector("#additionalSourcesContent");
 const arrangementsNode = document.querySelector("#arrangements");
+const usOnlyNode = document.querySelector("#usOnly");
 const locationGroupsNode = document.querySelector("#location-groups");
 const locationModeNoteNode = document.querySelector("#location-mode-note");
 const manualLocationSection = document.querySelector("#manual-location-section");
@@ -29,10 +30,9 @@ const locationModeInputs = document.querySelectorAll('input[name="locationMode"]
 const enableSourceCustomizationNode = document.querySelector("#enableSourceCustomization");
 const searchAtsSourcesNode = document.querySelector("#searchAtsSources");
 const searchAdditionalSourcesNode = document.querySelector("#searchAdditionalSources");
-const syncSourcesButtonNode = document.querySelector("#syncSourcesButton");
-const cacheStatusNode = document.querySelector("#cacheStatus");
 const groupActionButtons = document.querySelectorAll('[data-group-action]');
 const filterDropdownNodes = document.querySelectorAll('.filter-dropdown');
+const SEARCH_REQUEST_TIMEOUT_MS = 60000;
 
 let bootstrapData = null;
 let locationGroupCounter = 0;
@@ -52,7 +52,6 @@ atsSourceKeysNode.addEventListener("change", updateDropdownCounts);
 websiteSourceKeysNode.addEventListener("change", updateDropdownCounts);
 filterDropdownNodes.forEach((dropdown) => dropdown.addEventListener("toggle", handleFilterDropdownToggle));
 document.addEventListener("click", handleDocumentClick);
-syncSourcesButtonNode.addEventListener("click", handleManualSync);
 
 async function bootstrap() {
   try {
@@ -75,7 +74,7 @@ async function bootstrap() {
     renderCheckboxGroup(atsSourceKeysNode, sortByLabel(payload.atsSources, (source) => source.company), (source) => ({
       value: source.key,
       label: `${source.company} (${payload.providers[source.provider] || source.provider})`,
-      checked: false,
+      checked: true,
     }));
 
     websiteCollectionKeyNode.innerHTML = [
@@ -88,39 +87,11 @@ async function bootstrap() {
     syncLocationModeUI();
     updateDropdownCounts();
     syncSourceCustomizationUI();
-    renderCacheStatus(payload.cacheStatus);
   } catch (error) {
     setStatus("Error");
     resultsCountNode.textContent = "Unable to load filters";
     resultsNode.className = "results-list empty-state";
     resultsNode.textContent = error.message || "Bootstrap request failed.";
-  }
-}
-
-async function handleManualSync() {
-  syncSourcesButtonNode.disabled = true;
-  syncSourcesButtonNode.textContent = "Syncing...";
-
-  try {
-    const body = buildSourceSelectionPayload();
-    const response = await fetch("/api/cache/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120000),
-    });
-    const payload = await response.json();
-
-    if (!response.ok) {
-      throw new Error(payload.error || "Sync failed");
-    }
-
-    renderCacheStatus(payload.cacheStatus, `Synced ${payload.syncedSources} source${payload.syncedSources === 1 ? "" : "s"}.`);
-  } catch (error) {
-    renderCacheStatus(null, error.message || "Sync failed.");
-  } finally {
-    syncSourcesButtonNode.disabled = false;
-    syncSourcesButtonNode.textContent = "Sync sources";
   }
 }
 
@@ -147,21 +118,7 @@ async function handleSearch(event) {
 
   const locationGroups = collectEffectiveLocationGroups(locationMode);
 
-  const body = {
-    keyword: form.keyword.value.trim(),
-    recency: form.recency.value,
-    arrangements: getCheckedValues(arrangementsNode),
-    locationGroups,
-    distanceMiles: locationMode === "my_location" ? form.distanceMiles.value : "",
-    userCoordinates: locationMode === "my_location" && detectedLocation?.coordinates ? detectedLocation.coordinates : null,
-    sourceSelectionMode: enableSourceCustomizationNode.checked ? "custom" : "all",
-    searchAtsSources: enableSourceCustomizationNode.checked ? searchAtsSourcesNode.checked : true,
-    searchAdditionalSources: enableSourceCustomizationNode.checked ? searchAdditionalSourcesNode.checked : true,
-    websiteCollectionKey: websiteCollectionKeyNode.value,
-    selectedAtsSourceKeys: getCheckedValues(atsSourceKeysNode),
-    selectedWebsiteSourceKeys: getCheckedValues(websiteSourceKeysNode),
-    excludedCompanies: getCheckedValues(excludedCompaniesNode),
-  };
+  const body = buildSearchPayload(locationMode, locationGroups);
 
   if (body.sourceSelectionMode === "custom" && !body.searchAtsSources && !body.searchAdditionalSources) {
     setStatus("Choose sources");
@@ -178,7 +135,7 @@ async function handleSearch(event) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(SEARCH_REQUEST_TIMEOUT_MS),
     });
 
     const payload = await response.json();
@@ -392,27 +349,18 @@ function buildSourceSelectionPayload() {
   };
 }
 
-function renderCacheStatus(cacheStatus, prefix = "") {
-  if (!cacheStatusNode) {
-    return;
-  }
-
-  if (!cacheStatus) {
-    cacheStatusNode.textContent = prefix || "";
-    return;
-  }
-
-  const parts = [];
-  if (prefix) {
-    parts.push(prefix);
-  }
-  parts.push(`${cacheStatus.cachedJobs || 0} cached jobs`);
-  parts.push(`${cacheStatus.cachedSources || 0} cached sources`);
-  parts.push(`backend: ${cacheStatus.backend || "unknown"}`);
-  if (cacheStatus.lastError) {
-    parts.push(`last sync issue: ${cacheStatus.lastError}`);
-  }
-  cacheStatusNode.textContent = parts.join(" · ");
+function buildSearchPayload(locationMode = getLocationMode(), locationGroups = collectEffectiveLocationGroups(locationMode)) {
+  return {
+    keyword: form.keyword.value.trim(),
+    recency: form.recency.value,
+    arrangements: getCheckedValues(arrangementsNode),
+    usOnly: Boolean(usOnlyNode?.checked),
+    locationGroups,
+    distanceMiles: locationMode === "my_location" ? form.distanceMiles.value : "",
+    userCoordinates: locationMode === "my_location" && detectedLocation?.coordinates ? detectedLocation.coordinates : null,
+    excludedCompanies: getCheckedValues(excludedCompaniesNode),
+    ...buildSourceSelectionPayload(),
+  };
 }
 
 function handleGroupAction(event) {
@@ -695,6 +643,9 @@ function buildSummary(payload, filters, locationMode) {
   const arrangementText = filters.arrangements.length > 0
     ? `Arrangements: ${filters.arrangements.join(", ")}.`
     : "All arrangements included.";
+  const countryText = filters.usOnly
+    ? "Only United States jobs are included."
+    : "Jobs from all countries are included.";
 
   let locationText = "No location filter is active.";
   if (locationMode === "manual" && filters.locationGroups.length > 0) {
@@ -709,7 +660,7 @@ function buildSummary(payload, filters, locationMode) {
     }
   }
 
-  return `${successText}. ${unknownDateText} ${keywordText} ${arrangementText} ${locationText}`;
+  return `${successText}. ${unknownDateText} ${keywordText} ${arrangementText} ${countryText} ${locationText}`;
 }
 
 function renderLoadingState() {
@@ -734,10 +685,14 @@ function formatLocationGroup(group) {
 }
 
 function setStatus(text, isLoading = false) {
+  document.body.classList.toggle("searching-active", isLoading);
   statusPillNode.classList.toggle("loading", isLoading);
   statusPillNode.innerHTML = isLoading
     ? `${escapeHtml(text)} ${renderLoadingDots()}`
     : escapeHtml(text);
+  if (!isLoading) {
+    statusPillNode.classList.remove("loading");
+  }
 }
 
 function renderCheckboxGroup(node, items, mapItem) {

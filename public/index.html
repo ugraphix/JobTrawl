@@ -56,6 +56,10 @@
                   <input type="radio" name="locationMode" value="my_location">
                   <span>Use my location</span>
                 </label>
+                <label class="checkbox-item country-filter-item">
+                  <input id="usOnly" name="usOnly" type="checkbox">
+                  <span>U.S. jobs only</span>
+                </label>
               </div>
             </fieldset>
 
@@ -112,7 +116,7 @@
             <fieldset id="atsSourcesFieldset" class="filter-fieldset hidden-section" hidden>
               <legend>
                 <label class="legend-toggle">
-                  <input id="searchAtsSources" type="checkbox" checked>
+                  <input id="searchAtsSources" name="sourceSelectionKind" type="radio" checked>
                   <span>ATS/API sources</span>
                 </label>
               </legend>
@@ -136,7 +140,7 @@
             <fieldset id="additionalSourcesFieldset" class="filter-fieldset hidden-section" hidden>
               <legend>
                 <label class="legend-toggle">
-                  <input id="searchAdditionalSources" type="checkbox" checked>
+                  <input id="searchAdditionalSources" name="sourceSelectionKind" type="radio">
                   <span>Additional sources</span>
                 </label>
               </legend>
@@ -163,14 +167,6 @@
               </div>
             </fieldset>
 
-            <fieldset id="syncFieldset" class="filter-fieldset">
-              <legend>Source sync</legend>
-              <div class="sync-controls">
-                <button id="syncSourcesButton" class="secondary-button" type="button">Sync sources</button>
-                <div id="cacheStatus" class="muted-copy"></div>
-              </div>
-            </fieldset>
-
             <button class="search-button" type="submit">Search jobs</button>
           </form>
         </section>
@@ -181,7 +177,9 @@
               <p class="toolbar-label">Results</p>
               <h2 id="results-count">Run a search to load jobs</h2>
             </div>
-            <div id="status-pill" class="status-pill">Idle</div>
+            <div class="results-toolbar-actions">
+              <div id="status-pill" class="status-pill">Idle</div>
+            </div>
           </div>
 
           <div id="summary" class="summary"></div>
