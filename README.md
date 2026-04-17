@@ -1,6 +1,6 @@
 # ATS Job Aggregator
 
-A lightweight local web app that searches across configured ATS-backed job boards and normalizes results into one filterable list.
+A lightweight local web app that searches across configured ATS-backed career pages and normalizes results into one filterable list. It excludes aggregator sites like LinkedIn, Indeed, and Glassdoor to avoid ads, reposted, and ghost listings from for-profit platforms that treat users as the product.
 
 ## What it does
 
