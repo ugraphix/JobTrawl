@@ -1,0 +1,11 @@
+node_modules/
+data/jobs-cache.json
+data/jobs-cache.sqlite
+data/jobs-cache.sqlite-journal
+tmp_*.html
+tmp_*.xml
+tmp_*.js
+tmp_*.json
+tmp_*.txt
+tmp_chrome_profile/
+openpostings_reference/
