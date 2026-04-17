@@ -275,6 +275,35 @@ export function matchesLocationGroups(job, locationGroups) {
   });
 }
 
+export function matchesUnitedStates(job) {
+  const haystack = normalizeLocationHaystack(job);
+
+  if (!haystack) {
+    return false;
+  }
+
+  const normalizedCountry = normalizeText(job.country);
+  const normalizedRegion = normalizeText(job.region);
+
+  if (["us", "usa", "united states", "united states of america"].includes(normalizedCountry)) {
+    return true;
+  }
+
+  if (normalizedRegion && stateNameFromCode(normalizedRegion.toUpperCase()) !== normalizedRegion) {
+    return true;
+  }
+
+  return haystack.includes(" united states ")
+    || haystack.startsWith("united states ")
+    || haystack.endsWith(" united states")
+    || haystack.includes(" usa ")
+    || haystack.startsWith("usa ")
+    || haystack.endsWith(" usa")
+    || haystack.includes(" us ")
+    || haystack.startsWith("us ")
+    || haystack.endsWith(" us");
+}
+
 export function calculateJobDistanceMiles(job, originCoordinates) {
   if (!originCoordinates?.latitude || !originCoordinates?.longitude) {
     return null;

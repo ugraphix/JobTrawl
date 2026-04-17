@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { promises as fs } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { loadLocationConfig, loadSourceConfig } from "./lib/config.js";
 import { DISTANCE_OPTIONS, RECENCY_WINDOWS } from "./lib/filters.js";
@@ -14,6 +15,8 @@ import {
 } from "./lib/cache-db.js";
 
 const publicDir = path.join(process.cwd(), "public");
+const dataDir = path.join(process.cwd(), "data");
+const serverLogPath = path.join(dataDir, "server.log");
 const port = process.env.PORT || 3000;
 const DEFAULT_COMPANIES = [
   "Amazon",
@@ -29,6 +32,7 @@ const DEFAULT_COMPANIES = [
 ];
 
 const server = createServer(async (request, response) => {
+  const startedAt = Date.now();
   try {
     if (request.method === "GET" && request.url === "/api/bootstrap") {
       const [sources, states] = await Promise.all([loadSourceConfig(), loadLocationConfig()]);
@@ -45,22 +49,46 @@ const server = createServer(async (request, response) => {
         states,
         arrangements: ["remote", "hybrid", "onsite"],
         cacheStatus: getCacheStatus(),
+      }, {
+        method: request.method,
+        url: request.url,
+        startedAt,
       });
     }
 
     if (request.method === "GET" && request.url === "/api/cache/status") {
-      return sendJson(response, 200, getCacheStatus());
+      return sendJson(response, 200, getCacheStatus(), {
+        method: request.method,
+        url: request.url,
+        startedAt,
+      });
     }
 
     if (request.method === "POST" && request.url === "/api/cache/sync") {
       const body = await readJson(request);
       const allSources = await loadSourceConfig();
       const selectedSources = filterSources(allSources, body);
-      await ensureSourcesCached(selectedSources);
-      return sendJson(response, 200, {
+      const filters = buildSearchFilters(body);
+      const syncResult = await ensureSourcesCached(selectedSources, filters, { forceSync: true });
+      const payload = {
         ok: true,
-        syncedSources: selectedSources.length,
-        cacheStatus: getCacheStatus(),
+        syncedSources: syncResult.syncedSources,
+        failedSources: syncResult.failedSources,
+        attemptedSources: syncResult.attemptedSources,
+        cacheStatus: syncResult,
+        errors: syncResult.errors,
+      };
+      return sendJson(response, 200, payload, {
+        method: request.method,
+        url: request.url,
+        startedAt,
+        body,
+        meta: {
+          selectedSources: selectedSources.length,
+          attemptedSources: payload.attemptedSources,
+          syncedSources: payload.syncedSources,
+          failedSources: payload.failedSources,
+        },
       });
     }
 
@@ -68,32 +96,42 @@ const server = createServer(async (request, response) => {
       const body = await readJson(request);
       const allSources = await loadSourceConfig();
       const sources = filterSources(allSources, body);
-      const filters = {
-        keyword: body.keyword || "",
-        keywordScope: "title_and_description",
-        recency: body.recency || "",
-        arrangements: body.arrangements || [],
-        locationGroups: sanitizeLocationGroups(body.locationGroups),
-        distanceMiles: body.distanceMiles || null,
-        userCoordinates: sanitizeCoordinates(body.userCoordinates),
-        excludedCompanies: body.excludedCompanies || [],
-      };
+      const filters = buildSearchFilters(body);
       const sourceResultsOverride = await loadSourceResultsForSearch(sources, filters, { allowSync: false });
       const result = await searchJobs({
         sources,
         filters,
         sourceResultsOverride,
       });
-      return sendJson(response, 200, result);
+      return sendJson(response, 200, result, {
+        method: request.method,
+        url: request.url,
+        startedAt,
+        body,
+        meta: {
+          selectedSources: sources.length,
+          jobs: result.jobs.length,
+          failedSources: result.meta.failedSources,
+        },
+      });
     }
 
     if (request.method === "GET") {
       return serveStaticFile(request.url || "/", response);
     }
 
-    sendJson(response, 404, { error: "Not found" });
+    sendJson(response, 404, { error: "Not found" }, {
+      method: request.method,
+      url: request.url,
+      startedAt,
+    });
   } catch (error) {
-    sendJson(response, 500, { error: error.message || "Unexpected error" });
+    sendJson(response, 500, { error: error.message || "Unexpected error" }, {
+      method: request.method,
+      url: request.url,
+      startedAt,
+      error,
+    });
   }
 });
 
@@ -106,9 +144,12 @@ initCacheDb();
 
 function filterSources(sources, sourceKeys) {
   const selectionMode = sourceKeys?.sourceSelectionMode || "all";
+  const requestedSyncKeys = new Set(Array.isArray(sourceKeys?.syncSourceKeys) ? sourceKeys.syncSourceKeys : []);
 
   if (selectionMode !== "custom") {
-    return sources;
+    return requestedSyncKeys.size > 0
+      ? sources.filter((source) => requestedSyncKeys.has(source.key))
+      : sources;
   }
 
   const searchAtsSources = Boolean(sourceKeys?.searchAtsSources);
@@ -141,7 +182,12 @@ function filterSources(sources, sourceKeys) {
     );
   }
 
-  return [...new Map(selectedSources.map((source) => [source.key, source])).values()];
+  const deduped = [...new Map(selectedSources.map((source) => [source.key, source])).values()];
+  if (requestedSyncKeys.size === 0) {
+    return deduped;
+  }
+
+  return deduped.filter((source) => requestedSyncKeys.has(source.key));
 }
 
 async function readJson(request) {
@@ -185,7 +231,7 @@ function normalizePublicPath(url) {
   return clean || "index.html";
 }
 
-function sendJson(response, status, payload) {
+function sendJson(response, status, payload, requestMeta = null) {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store, no-cache, must-revalidate",
@@ -193,6 +239,38 @@ function sendJson(response, status, payload) {
     Expires: "0",
   });
   response.end(JSON.stringify(payload));
+  logRequest(requestMeta, status, payload);
+}
+
+function logRequest(requestMeta, status, payload) {
+  if (!requestMeta) {
+    return;
+  }
+
+  mkdirSync(dataDir, { recursive: true });
+  const elapsedMs = Date.now() - Number(requestMeta.startedAt || Date.now());
+  const body = requestMeta.body || {};
+  const summary = {
+    timestamp: new Date().toISOString(),
+    method: requestMeta.method || "",
+    url: requestMeta.url || "",
+    status,
+    elapsedMs,
+    keyword: typeof body.keyword === "string" ? body.keyword : "",
+    recency: typeof body.recency === "string" ? body.recency : "",
+    sourceSelectionMode: typeof body.sourceSelectionMode === "string" ? body.sourceSelectionMode : "",
+    searchAtsSources: body.searchAtsSources,
+    searchAdditionalSources: body.searchAdditionalSources,
+    websiteCollectionKey: typeof body.websiteCollectionKey === "string" ? body.websiteCollectionKey : "",
+    selectedAtsSourceKeys: Array.isArray(body.selectedAtsSourceKeys) ? body.selectedAtsSourceKeys.length : 0,
+    selectedWebsiteSourceKeys: Array.isArray(body.selectedWebsiteSourceKeys) ? body.selectedWebsiteSourceKeys.length : 0,
+    excludedCompanies: Array.isArray(body.excludedCompanies) ? body.excludedCompanies.length : 0,
+    meta: requestMeta.meta || {},
+    error: requestMeta.error ? (requestMeta.error.message || String(requestMeta.error)) : null,
+    responseError: payload?.error || null,
+  };
+
+  appendFileSync(serverLogPath, `${JSON.stringify(summary)}\n`, "utf8");
 }
 
 function buildWebsiteCollections(sources) {
@@ -225,6 +303,20 @@ function buildWebsiteCollections(sources) {
       sources: [...group.sources].sort((left, right) => left.company.localeCompare(right.company, undefined, { sensitivity: "base" })),
     }))
     .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" }));
+}
+
+function buildSearchFilters(body) {
+  return {
+    keyword: body.keyword || "",
+    keywordScope: "title_and_description",
+    recency: body.recency || "",
+    arrangements: body.arrangements || [],
+    usOnly: Boolean(body.usOnly),
+    locationGroups: sanitizeLocationGroups(body.locationGroups),
+    distanceMiles: body.distanceMiles || null,
+    userCoordinates: sanitizeCoordinates(body.userCoordinates),
+    excludedCompanies: body.excludedCompanies || [],
+  };
 }
 
 function sanitizeLocationGroups(locationGroups) {

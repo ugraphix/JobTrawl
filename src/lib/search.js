@@ -5,6 +5,7 @@ import {
   matchesKeyword,
   matchesLocationGroups,
   matchesRecency,
+  matchesUnitedStates,
   normalizeWorkArrangement,
   uniqueBy,
 } from "./filters.js";
@@ -52,6 +53,10 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
       }
 
       if (!matchesRecency(enriched, filters.recency)) {
+        continue;
+      }
+
+      if (filters.usOnly && !matchesUnitedStates(enriched)) {
         continue;
       }
 

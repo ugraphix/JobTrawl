@@ -10,6 +10,9 @@ const DEFAULT_SYNC_INTERVAL_MS = Number(process.env.CACHE_SYNC_INTERVAL_MS || 30
 const DEFAULT_SOURCE_MAX_AGE_MS = Number(process.env.CACHE_SOURCE_MAX_AGE_MS || 6 * 60 * 60 * 1000);
 const DEFAULT_TTL_MS = Number(process.env.CACHE_POSTING_TTL_MS || 45 * 24 * 60 * 60 * 1000);
 const DEFAULT_SYNC_CONCURRENCY = Math.max(1, Number(process.env.CACHE_SYNC_CONCURRENCY || 4));
+const DEFAULT_SEARCH_CONCURRENCY = Math.max(1, Number(process.env.CACHE_SEARCH_CONCURRENCY || 8));
+const DEFAULT_SOURCE_SEARCH_TIMEOUT_MS = Math.max(1000, Number(process.env.CACHE_SOURCE_SEARCH_TIMEOUT_MS || 12000));
+const DEFAULT_SOURCE_SYNC_TIMEOUT_MS = Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, Number(process.env.CACHE_SOURCE_SYNC_TIMEOUT_MS || 60000));
 
 let database = null;
 let cacheBackend = "sqlite";
@@ -140,63 +143,79 @@ export function startBackgroundCacheSync(loadSources) {
   }
 }
 
-export async function ensureSourcesCached(sources, filters = {}) {
+export async function ensureSourcesCached(sources, filters = {}, options = {}) {
   initCacheDb();
   pruneExpiredCache();
 
-  const staleSources = sources.filter((source) => isSourceStale(source.key));
+  const staleSources = options.forceSync ? sources : sources.filter((source) => isSourceStale(source.key));
+  let syncedSources = 0;
+  let failedSources = 0;
+  const errors = [];
+
   await runWithConcurrency(staleSources, DEFAULT_SYNC_CONCURRENCY, async (source) => {
-    await syncSourceToCache(source, filters);
+    try {
+      await syncSourceToCache(source, filters, { timeoutMs: DEFAULT_SOURCE_SYNC_TIMEOUT_MS });
+      syncedSources += 1;
+    } catch (error) {
+      failedSources += 1;
+      errors.push({
+        sourceKey: source.key,
+        company: source.company,
+        error: error?.message || String(error),
+      });
+    }
   });
 
-  return getCacheStatus();
+  return {
+    ...getCacheStatus(),
+    requestedSources: sources.length,
+    attemptedSources: staleSources.length,
+    syncedSources,
+    failedSources,
+    errors,
+  };
 }
 
 export async function loadSourceResultsForSearch(sources, filters = {}, options = {}) {
   initCacheDb();
   pruneExpiredCache();
 
-  const results = [];
   const allowSync = Boolean(options.allowSync);
+  const results = new Array(sources.length);
 
-  for (const source of sources) {
-    const existingJobs = readCachedJobsForSource(source.key);
-    const hasFreshCache = !isSourceStale(source.key);
-
-    if (hasFreshCache && existingJobs.length > 0) {
-      results.push({ source, jobs: existingJobs, error: null });
-      continue;
-    }
-
-    if (!allowSync) {
-      if (existingJobs.length > 0) {
-        results.push({ source, jobs: existingJobs, error: null });
-        continue;
-      }
-
-      try {
-        const jobs = await fetchJobsForSource(source, filters);
-        results.push({ source, jobs, error: null });
-      } catch (error) {
-        results.push({ source, jobs: [], error: error?.message || String(error) });
-      }
-      continue;
-    }
-
-    try {
-      await syncSourceToCache(source, filters);
-      results.push({ source, jobs: readCachedJobsForSource(source.key), error: null });
-    } catch (error) {
-      const fallbackJobs = readCachedJobsForSource(source.key);
-      results.push({
-        source,
-        jobs: fallbackJobs,
-        error: fallbackJobs.length > 0 ? null : (error?.message || String(error)),
-      });
-    }
-  }
+  await runWithConcurrency(sources, DEFAULT_SEARCH_CONCURRENCY, async (source, index) => {
+    results[index] = await loadSingleSourceResult(source, filters, allowSync);
+  });
 
   return results;
+}
+
+async function loadSingleSourceResult(source, filters, allowSync) {
+  const existingJobs = readCachedJobsForSource(source.key);
+  const hasFreshCache = !isSourceStale(source.key);
+
+  if (hasFreshCache && existingJobs.length > 0) {
+    return { source, jobs: existingJobs, error: null };
+  }
+
+  if (!allowSync) {
+    if (existingJobs.length > 0) {
+      return { source, jobs: existingJobs, error: null };
+    }
+    return { source, jobs: [], error: null };
+  }
+
+  try {
+    await syncSourceToCache(source, filters, { timeoutMs: DEFAULT_SOURCE_SYNC_TIMEOUT_MS });
+    return { source, jobs: readCachedJobsForSource(source.key), error: null };
+  } catch (error) {
+    const fallbackJobs = readCachedJobsForSource(source.key);
+    return {
+      source,
+      jobs: fallbackJobs,
+      error: fallbackJobs.length > 0 ? null : (error?.message || String(error)),
+    };
+  }
 }
 
 async function runBackgroundCacheSync(loadSources) {
@@ -223,7 +242,7 @@ async function runBackgroundCacheSync(loadSources) {
   }
 }
 
-async function syncSourceToCache(source, filters = {}) {
+async function syncSourceToCache(source, filters = {}, options = {}) {
   if (sourceSyncPromises.has(source.key)) {
     return sourceSyncPromises.get(source.key);
   }
@@ -233,7 +252,11 @@ async function syncSourceToCache(source, filters = {}) {
     const now = Date.now();
 
     try {
-      const jobs = await fetchJobsForSource(source, filters);
+      const jobs = await fetchJobsForSourceWithTimeout(
+        source,
+        filters,
+        Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_SOURCE_SYNC_TIMEOUT_MS
+      );
       replaceSourceJobs(db, source, jobs, now);
       recordSourceState(db, source, {
         lastSyncedAt: now,
@@ -258,9 +281,11 @@ async function syncSourceToCache(source, filters = {}) {
 }
 
 function replaceSourceJobs(db, source, jobs, now) {
+  const dedupedJobs = dedupeJobsForCache(source, jobs);
+
   if (cacheBackend === "json") {
     jsonCache.postings = jsonCache.postings.filter((posting) => posting.source_key !== source.key);
-    const mapped = jobs.map((job) => ({
+    const mapped = dedupedJobs.map((job) => ({
       source_key: source.key,
       provider: source.provider,
       company: job.company || source.company,
@@ -306,7 +331,7 @@ function replaceSourceJobs(db, source, jobs, now) {
       )
     `);
 
-    for (const job of jobs) {
+    for (const job of dedupedJobs) {
       statement.run(
         source.key,
         source.provider,
@@ -340,6 +365,26 @@ function replaceSourceJobs(db, source, jobs, now) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function dedupeJobsForCache(source, jobs) {
+  const seen = new Set();
+  const deduped = [];
+
+  for (const job of jobs) {
+    const externalId = String(job.externalId || job.id || job.applyUrl || "");
+    const fallbackKey = `${source.key}|${job.title || ""}|${job.applyUrl || ""}`;
+    const dedupeKey = externalId || fallbackKey;
+
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    deduped.push(job);
+  }
+
+  return deduped;
 }
 
 function recordSourceState(db, source, state) {
@@ -432,6 +477,14 @@ function pruneExpiredCache() {
   saveJsonCache();
 }
 
+async function fetchJobsForSourceWithTimeout(source, filters, timeoutMs) {
+  return withTimeout(
+    fetchJobsForSource(source, filters),
+    timeoutMs,
+    `${source.company} timed out after ${Math.ceil(timeoutMs / 1000)}s`
+  );
+}
+
 async function runWithConcurrency(items, concurrency, worker) {
   let index = 0;
 
@@ -445,6 +498,24 @@ async function runWithConcurrency(items, concurrency, worker) {
 
   const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length || 1)) }, () => consume());
   await Promise.all(workers);
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId = null;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(message);
+      error.code = "ETIMEDOUT";
+      reject(error);
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  });
 }
 
 function loadJsonCache() {
