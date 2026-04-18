@@ -1,11 +1,13 @@
 import { fetchJobsForSource } from "./adapters/index.js";
 import {
   calculateJobDistanceMiles,
+  hasSpecifiedLocation,
   isLikelyJobPosting,
   matchesKeyword,
   matchesLocationGroups,
   matchesRecency,
   matchesUnitedStates,
+  normalizeText,
   normalizeWorkArrangement,
   uniqueBy,
 } from "./filters.js";
@@ -38,6 +40,8 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
         workArrangement: arrangement,
         distanceMiles: null,
         locationMatched: false,
+        usLocationUnknown: false,
+        arrangementUnknown: false,
       };
 
       if (excludedCompanies.has(enriched.company.toLowerCase())) {
@@ -48,7 +52,7 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
         continue;
       }
 
-      if (!matchesKeyword(enriched, filters.keyword, filters.keywordScope)) {
+      if (!matchesKeyword(enriched, filters.keyword, filters.keywordScope, filters.keywordMode)) {
         continue;
       }
 
@@ -56,12 +60,22 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
         continue;
       }
 
-      if (filters.usOnly && !matchesUnitedStates(enriched)) {
-        continue;
+      if (filters.usOnly) {
+        if (matchesUnitedStates(enriched)) {
+          enriched.usLocationUnknown = false;
+        } else if (!hasSpecifiedLocation(enriched)) {
+          enriched.usLocationUnknown = true;
+        } else {
+          continue;
+        }
       }
 
-      if (selectedArrangements.size > 0 && !selectedArrangements.has(arrangement)) {
-        continue;
+      if (selectedArrangements.size > 0) {
+        if (arrangement === "unknown") {
+          enriched.arrangementUnknown = true;
+        } else if (!selectedArrangements.has(arrangement)) {
+          continue;
+        }
       }
 
       if (useDistanceFilter) {
@@ -91,7 +105,7 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
 
   const deduped = uniqueBy(
     jobs.sort(sortJobs),
-    (job) => `${job.company}|${job.title}|${job.applyUrl}`
+    buildSearchDedupKey
   );
 
   return {
@@ -115,6 +129,32 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
       distanceFilterApplied: Boolean(useDistanceFilter),
     },
   };
+}
+
+function buildSearchDedupKey(job) {
+  const normalizedCompany = normalizeText(job.company);
+  const normalizedTitle = normalizeText(job.title);
+  const normalizedLocation = normalizeText(
+    [
+      job.locationLabel,
+      job.city,
+      job.region,
+      job.country,
+      job.rawLocationText,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  ) || "unspecified";
+  const normalizedArrangement = normalizeText(job.workArrangement) || "unknown";
+  const normalizedSource = normalizeText(job.sourceKey || job.sourceName || job.provider);
+
+  return [
+    normalizedSource,
+    normalizedCompany,
+    normalizedTitle,
+    normalizedLocation,
+    normalizedArrangement,
+  ].join("|");
 }
 
 function needsLocationFilter(arrangement, filters) {

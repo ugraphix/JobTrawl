@@ -141,7 +141,8 @@
     {
       "key": "pitchbook-careerpage",
       "company": "PitchBook",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "pitchbookdata",
       "careersUrl": "https://pitchbook.com/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -177,7 +178,8 @@
     {
       "key": "extrahop-careerpage",
       "company": "ExtraHop",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "extrahopnetworks",
       "careersUrl": "https://www.extrahop.com/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -187,7 +189,8 @@
     {
       "key": "possible-finance-careerpage",
       "company": "Possible Finance",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "possiblefinancialinc",
       "careersUrl": "https://www.possiblefinance.com/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -278,7 +281,8 @@
     {
       "key": "robinhood-careerpage",
       "company": "Robinhood",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "robinhood",
       "careersUrl": "https://careers.robinhood.com/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -420,7 +424,8 @@
     {
       "key": "databricks-careerpage",
       "company": "Databricks",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "databricks",
       "careersUrl": "https://www.databricks.com/company/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -440,7 +445,8 @@
     {
       "key": "mongodb-careerpage",
       "company": "MongoDB",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "mongodb",
       "careersUrl": "https://www.mongodb.com/company/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -450,7 +456,8 @@
     {
       "key": "elastic-careerpage",
       "company": "Elastic",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "elastic",
       "careersUrl": "https://www.elastic.co/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -491,7 +498,8 @@
     {
       "key": "affirm-careerpage",
       "company": "Affirm",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "affirm",
       "careersUrl": "https://www.affirm.com/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -501,7 +509,8 @@
     {
       "key": "carta-careerpage",
       "company": "Carta",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "carta",
       "careersUrl": "https://carta.com/careers/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -511,7 +520,8 @@
     {
       "key": "gusto-careerpage",
       "company": "Gusto",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "gusto",
       "careersUrl": "https://gusto.com/about/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -521,7 +531,8 @@
     {
       "key": "brex-careerpage",
       "company": "Brex",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "brex",
       "careersUrl": "https://www.brex.com/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -531,7 +542,8 @@
     {
       "key": "sofi-careerpage",
       "company": "SoFi",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "sofi",
       "careersUrl": "https://www.sofi.com/careers/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -541,7 +553,8 @@
     {
       "key": "whatnot-careerpage",
       "company": "Whatnot",
-      "provider": "careerpage",
+      "provider": "ashby",
+      "organization": "whatnot",
       "careersUrl": "https://careers.whatnot.com/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -551,7 +564,8 @@
     {
       "key": "headway-careerpage",
       "company": "Headway",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "headway",
       "careersUrl": "https://headway.co/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -582,7 +596,8 @@
     {
       "key": "anthropic-careerpage",
       "company": "Anthropic",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "anthropic",
       "careersUrl": "https://www.anthropic.com/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -603,7 +618,8 @@
     {
       "key": "xai-careerpage",
       "company": "xAI",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "xai",
       "careersUrl": "https://x.ai/careers/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -613,7 +629,8 @@
     {
       "key": "allen-institute-for-ai-careerpage",
       "company": "Allen Institute for AI",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "thealleninstitute",
       "careersUrl": "https://allenai.org/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -623,7 +640,8 @@
     {
       "key": "carbon-robotics-careerpage",
       "company": "Carbon Robotics",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "carbonrobotics",
       "careersUrl": "https://carbonrobotics.com/careers/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -643,7 +661,8 @@
     {
       "key": "temporal-careerpage",
       "company": "Temporal",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "temporaltechnologies",
       "careersUrl": "https://temporal.io/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -653,7 +672,8 @@
     {
       "key": "rec-room-careerpage",
       "company": "Rec Room",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "recroomjobs",
       "careersUrl": "https://recroom.com/jobs",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -663,7 +683,8 @@
     {
       "key": "bungie-careerpage",
       "company": "Bungie",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "bungie",
       "careersUrl": "https://careers.bungie.com/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -823,8 +844,8 @@
     {
       "key": "slalom-careerpage",
       "company": "Slalom",
-      "provider": "careerpage",
-      "careersUrl": "https://www.slalom.com/us/en/careers",
+      "provider": "slalom",
+      "careersUrl": "https://jobs.slalom.com/#/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
       "collectionLabel": "Seattle tech companies",
@@ -953,7 +974,8 @@
     {
       "key": "blacksky-careerpage",
       "company": "BlackSky",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "blacksky",
       "careersUrl": "https://blacksky.com/company/careers/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -963,7 +985,8 @@
     {
       "key": "read-ai-careerpage",
       "company": "Read AI",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "readai",
       "careersUrl": "https://www.read.ai/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -973,7 +996,8 @@
     {
       "key": "helion-careerpage",
       "company": "Helion",
-      "provider": "careerpage",
+      "provider": "ashby",
+      "organization": "helion",
       "careersUrl": "https://www.helionenergy.com/careers/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -983,7 +1007,8 @@
     {
       "key": "chainguard-careerpage",
       "company": "Chainguard",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "chainguard",
       "careersUrl": "https://www.chainguard.dev/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -993,7 +1018,8 @@
     {
       "key": "truveta-careerpage",
       "company": "Truveta",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "truveta",
       "careersUrl": "https://www.truveta.com/careers/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -1003,7 +1029,8 @@
     {
       "key": "statsig-careerpage",
       "company": "Statsig",
-      "provider": "careerpage",
+      "provider": "ashby",
+      "organization": "statsig",
       "careersUrl": "https://www.statsig.com/careers",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -1056,7 +1083,8 @@
     {
       "key": "echodyne-careerpage",
       "company": "Echodyne",
-      "provider": "careerpage",
+      "provider": "greenhouse",
+      "boardToken": "echodynecorp",
       "careersUrl": "https://www.echodyne.com/careers/",
       "importedFrom": "seattle_tech_careers_verified_pm_links_top100.xlsx",
       "collectionKey": "seattle-tech",
@@ -1090,10 +1118,9 @@
     {
       "key": "fred-hutch-healthcare",
       "company": "Fred Hutch",
-      "provider": "careerpage",
+      "provider": "icims",
       "careersUrl": "https://careers-fhcrc.icims.com/jobs/search?ss=1&in_iframe=1",
       "keywordSearchUrlTemplate": "https://careers-fhcrc.icims.com/jobs/search?ss=1&in_iframe=1&searchKeyword={{keyword}}&searchLocation={{location}}",
-      "htmlListStrategy": "icims-search-results",
       "collectionKey": "seattle-healthcare",
       "collectionLabel": "Seattle healthcare employers",
       "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"

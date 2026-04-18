@@ -24,6 +24,19 @@
               <input id="keyword" name="keyword" type="text" placeholder="Product Manager, Platform, Growth...">
             </label>
 
+            <fieldset class="keyword-mode-fieldset">
+              <div class="keyword-mode-options">
+                <label class="checkbox-item keyword-mode-item">
+                  <input type="radio" name="keywordMode" value="strict" checked>
+                  <span>Strict keyword search</span>
+                </label>
+                <label class="checkbox-item keyword-mode-item">
+                  <input type="radio" name="keywordMode" value="loose">
+                  <span>Loose keyword search</span>
+                </label>
+              </div>
+            </fieldset>
+
             <label>
               <span>Posted within</span>
               <select id="recency" name="recency">
@@ -45,7 +58,7 @@
               <legend>Location mode</legend>
               <div class="checkbox-grid location-mode-grid">
                 <label class="checkbox-item">
-                  <input type="radio" name="locationMode" value="none">
+                  <input type="radio" name="locationMode" value="none" checked>
                   <span>No location filter</span>
                 </label>
                 <label class="checkbox-item">
@@ -97,6 +110,13 @@
                     <span id="excludedCompaniesCount" class="dropdown-count">0 selected</span>
                   </summary>
                   <div class="dropdown-panel">
+                    <input
+                      id="excludedCompaniesSearch"
+                      class="dropdown-search"
+                      type="text"
+                      placeholder="Search companies"
+                      autocomplete="off"
+                    >
                     <div id="excludedCompanies" class="checkbox-grid tall-grid"></div>
                   </div>
                 </details>
@@ -113,13 +133,21 @@
               </label>
             </fieldset>
 
-            <fieldset id="atsSourcesFieldset" class="filter-fieldset hidden-section" hidden>
-              <legend>
-                <label class="legend-toggle">
-                  <input id="searchAtsSources" name="sourceSelectionKind" type="radio" checked>
+            <fieldset id="customizeSearchModeFieldset" class="hidden-section" hidden>
+              <div class="keyword-mode-options customize-search-options">
+                <label class="checkbox-item keyword-mode-item">
+                  <input type="radio" name="sourceCustomizationMode" value="companies" checked>
+                  <span>Specific companies</span>
+                </label>
+                <label class="checkbox-item keyword-mode-item">
+                  <input type="radio" name="sourceCustomizationMode" value="ats">
                   <span>ATS/API sources</span>
                 </label>
-              </legend>
+              </div>
+            </fieldset>
+
+            <fieldset id="atsSourcesFieldset" class="filter-fieldset hidden-section" hidden>
+              <legend>ATS/API sources</legend>
               <div id="atsSourcesContent" class="filter-group">
                 <div class="filter-toolbar" hidden>
                   <button type="button" class="text-button" data-group-action="select-all" data-target="atsSourceKeys">Select all</button>
@@ -137,33 +165,29 @@
               </div>
             </fieldset>
 
-            <fieldset id="additionalSourcesFieldset" class="filter-fieldset hidden-section" hidden>
-              <legend>
-                <label class="legend-toggle">
-                  <input id="searchAdditionalSources" name="sourceSelectionKind" type="radio">
-                  <span>Additional sources</span>
-                </label>
-              </legend>
-              <div id="additionalSourcesContent">
-                <select id="websiteCollectionKey" name="websiteCollectionKey">
-                  <option value="">None</option>
-                </select>
-                <div id="websiteSourcesGroup" class="filter-group" hidden>
-                  <div id="websiteCollectionDescription" class="muted-copy"></div>
-                  <div class="filter-toolbar" hidden>
-                    <button type="button" class="text-button" data-group-action="select-all" data-target="websiteSourceKeys">Select all</button>
-                    <button type="button" class="text-button" data-group-action="clear-all" data-target="websiteSourceKeys">Clear all</button>
-                  </div>
-                  <details id="websiteSourcesDropdown" class="filter-dropdown">
-                    <summary>
-                      <span class="dropdown-label">Choose websites</span>
-                      <span id="websiteSourcesCount" class="dropdown-count">0 selected</span>
-                    </summary>
-                    <div class="dropdown-panel">
-                      <div id="websiteSourceKeys" class="checkbox-grid tall-grid"></div>
-                    </div>
-                  </details>
+            <fieldset id="includedCompaniesFieldset" class="filter-fieldset hidden-section" hidden>
+              <legend>Specific companies</legend>
+              <div class="filter-group">
+                <div class="filter-toolbar" hidden>
+                  <button type="button" class="text-button" data-group-action="select-all" data-target="includedCompanies">Select all</button>
+                  <button type="button" class="text-button" data-group-action="clear-all" data-target="includedCompanies">Clear all</button>
                 </div>
+                <details class="filter-dropdown">
+                  <summary>
+                    <span class="dropdown-label">Choose companies</span>
+                    <span id="includedCompaniesCount" class="dropdown-count">0 selected</span>
+                  </summary>
+                  <div class="dropdown-panel">
+                    <input
+                      id="includedCompaniesSearch"
+                      class="dropdown-search"
+                      type="text"
+                      placeholder="Search companies"
+                      autocomplete="off"
+                    >
+                    <div id="includedCompanies" class="checkbox-grid tall-grid"></div>
+                  </div>
+                </details>
               </div>
             </fieldset>
 
