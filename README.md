@@ -18,7 +18,7 @@ The result is a local search console that can cover both carefully chosen employ
 - Caches fetched jobs locally in SQLite for faster repeat searches
 - Deduplicates and sorts matches across sources
 - Returns partial results if some sources fail or time out
-- Lets you narrow results by title, date, work arrangement, location, and excluded companies
+- Lets you narrow results by title, date, work arrangement, location, excluded companies, and customized source selection by specific companies or ATS/API provider type
 
 ## How it works
 
@@ -40,24 +40,29 @@ flowchart TD
     D --> E["User submits search"]
     E --> F["POST /api/search"]
     F --> G["Merge curated + generated source config"]
-    G --> H["Select enabled source groups"]
-    H --> I["Load cached jobs when available"]
-    I --> J{"Fresh cache exists?"}
+    G --> H{"Customized search mode?"}
+    H -->|All sources| I["Use default source set"]
+    H -->|Specific companies| J["Filter sources by included companies"]
+    H -->|ATS/API sources| K["Filter sources by selected ATS providers"]
+    I --> L["Load cached jobs when available"]
+    J --> L
+    K --> L
+    L --> M{"Fresh cache exists?"}
 
-    J -->|Yes| K["Read normalized jobs from SQLite cache"]
-    J -->|No| L["Fetch source through provider adapter"]
+    M -->|Yes| N["Read normalized jobs from SQLite cache"]
+    M -->|No| O["Fetch source through provider adapter"]
 
-    L --> M{"ATS/API or public career page?"}
-    M -->|ATS/API| N["Call provider endpoint and map response"]
-    M -->|Career page| O["Fetch public HTML / sitemap / embedded JSON and extract jobs"]
+    O --> P{"ATS/API or public career page?"}
+    P -->|ATS/API| Q["Call provider endpoint and map response"]
+    P -->|Career page| R["Fetch public HTML / sitemap / embedded JSON and extract jobs"]
 
-    N --> P["Normalize jobs into shared structure"]
-    O --> P
-    P --> Q["Write jobs to local cache"]
-    Q --> R["Apply keyword, recency, arrangement, U.S., location, distance, and exclusion filters"]
-    K --> R
-    R --> S["Deduplicate and sort newest first"]
-    S --> T["Return jobs + per-source health to UI"]
+    Q --> S["Normalize jobs into shared structure"]
+    R --> S
+    S --> T["Write jobs to local cache"]
+    T --> U["Apply keyword, recency, arrangement, U.S., location, distance, inclusion, and exclusion filters"]
+    N --> U
+    U --> V["Deduplicate and sort newest first"]
+    V --> W["Return jobs + per-source health to UI"]
 ```
 
 ## Filters
@@ -76,7 +81,7 @@ The UI in `public/index.html` and `public/app.js` supports these filters:
 - Manual state + city/area groups from `config/locations.json`
 - Distance from your detected browser location
 - Excluded companies
-- Source customization by ATS/provider type
+- Customize search by `Specific companies` or by `ATS/API sources`
 
 ### How the filters behave
 
@@ -87,6 +92,7 @@ The UI in `public/index.html` and `public/app.js` supports these filters:
 - Location filtering is text-based unless the distance filter is active.
 - The distance filter uses browser coordinates plus a built-in location alias map for supported metros.
 - `U.S. jobs only` keeps postings that clearly look U.S.-based and can optionally keep unknown-location jobs in a separate section.
+- Customized search can either filter to an included company list or limit the search to selected ATS/API provider families.
 - Excluded companies are filtered out after normalization.
 - Results are deduplicated by source, company, title, location, and arrangement.
 
@@ -301,9 +307,10 @@ npm run dev
 2. Open `http://localhost:3000`
 3. Enter a keyword or role title
 4. Choose recency, arrangement, and location filters
-5. Optionally exclude companies
-6. Run the search
-7. Open the direct application link from a result card
+5. Optionally customize the search to specific companies or ATS/API source types
+6. Optionally exclude companies
+7. Run the search
+8. Open the direct application link from a result card
 
 ## Configuring your own sources
 
