@@ -92,12 +92,14 @@ body {
   max-height: none;
   overflow: visible;
   padding: 16px;
+  min-width: 0;
 }
 
 .filters-form {
   display: grid;
   gap: 10px;
   padding-bottom: 8px;
+  min-width: 0;
 }
 
 label,
@@ -105,6 +107,7 @@ fieldset {
   display: grid;
   gap: 8px;
   font-size: 0.9rem;
+  min-width: 0;
 }
 
 label > span,
@@ -130,6 +133,8 @@ input,
 select,
 button {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border-radius: 14px;
   border: 1px solid rgba(31, 27, 23, 0.16);
   background: var(--panel-strong);
@@ -148,6 +153,7 @@ input:disabled {
   display: grid;
   gap: 8px;
   padding: 10px;
+  min-width: 0;
   border-radius: 16px;
   border: 1px solid rgba(31, 27, 23, 0.12);
   background: rgba(255, 255, 255, 0.72);
@@ -166,6 +172,7 @@ input:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   font-size: 0.84rem;
   font-weight: 400;
   line-height: 1.25;
@@ -173,11 +180,49 @@ input:disabled {
 
 .checkbox-item span {
   font-weight: 400;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .checkbox-item input {
   width: auto;
   margin: 0;
+}
+
+.keyword-mode-fieldset {
+  margin-top: -4px;
+}
+
+.keyword-mode-options {
+  display: grid;
+  gap: 6px;
+  padding-left: 2px;
+}
+
+.keyword-mode-item {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.customize-search-options .keyword-mode-item {
+  font-size: 0.82rem;
+}
+
+.customize-search-options .keyword-mode-item span {
+  font-size: 0.82rem;
+}
+
+#atsSourcesFieldset .filter-dropdown summary,
+#includedCompaniesFieldset .filter-dropdown summary,
+#atsSourcesFieldset .dropdown-label,
+#includedCompaniesFieldset .dropdown-label {
+  font-size: 0.88rem;
+}
+
+#atsSourcesFieldset .dropdown-count,
+#includedCompaniesFieldset .dropdown-count {
+  font-size: 0.78rem;
 }
 
 .location-mode-grid {
@@ -195,6 +240,8 @@ input:disabled {
 }
 
 .filter-dropdown {
+  width: 100%;
+  min-width: 0;
   border: 1px solid rgba(31, 27, 23, 0.12);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.62);
@@ -208,6 +255,7 @@ input:disabled {
   cursor: pointer;
   list-style: none;
   padding: 10px 12px;
+  min-width: 0;
   font-size: 0.84rem;
   font-weight: 600;
 }
@@ -235,6 +283,16 @@ input:disabled {
 
 .dropdown-panel {
   padding: 0 10px 10px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.dropdown-search {
+  margin: 8px 0 10px;
+  font-size: 0.84rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .group-actions .text-button {

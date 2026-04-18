@@ -134,6 +134,26 @@ export function getCacheStatus() {
   };
 }
 
+export function getCachedSourceKeys() {
+  initCacheDb();
+
+  if (cacheBackend === "sqlite") {
+    const rows = database.prepare(`
+      SELECT DISTINCT source_key
+      FROM cached_postings
+      WHERE expires_at > ?
+    `).all(Date.now());
+    return new Set(rows.map((row) => String(row?.source_key || "")).filter(Boolean));
+  }
+
+  return new Set(
+    jsonCache.postings
+      .filter((posting) => Number(posting.expires_at || 0) > Date.now())
+      .map((posting) => String(posting.source_key || ""))
+      .filter(Boolean)
+  );
+}
+
 export function startBackgroundCacheSync(loadSources) {
   // Background syncing is intentionally disabled. Syncing is manual-only.
   void loadSources;
@@ -193,6 +213,7 @@ export async function loadSourceResultsForSearch(sources, filters = {}, options 
 async function loadSingleSourceResult(source, filters, allowSync) {
   const existingJobs = readCachedJobsForSource(source.key);
   const hasFreshCache = !isSourceStale(source.key);
+  const requiresBatchCaching = isGeneratedInventorySource(source);
 
   if (hasFreshCache && existingJobs.length > 0) {
     return { source, jobs: existingJobs, error: null };
@@ -205,8 +226,16 @@ async function loadSingleSourceResult(source, filters, allowSync) {
     return { source, jobs: [], error: null };
   }
 
+  if (requiresBatchCaching) {
+    return {
+      source,
+      jobs: existingJobs,
+      error: null,
+    };
+  }
+
   try {
-    await syncSourceToCache(source, filters, { timeoutMs: DEFAULT_SOURCE_SYNC_TIMEOUT_MS });
+    await syncSourceToCache(source, filters, { timeoutMs: DEFAULT_SOURCE_SEARCH_TIMEOUT_MS });
     return { source, jobs: readCachedJobsForSource(source.key), error: null };
   } catch (error) {
     const fallbackJobs = readCachedJobsForSource(source.key);
@@ -483,6 +512,10 @@ async function fetchJobsForSourceWithTimeout(source, filters, timeoutMs) {
     timeoutMs,
     `${source.company} timed out after ${Math.ceil(timeoutMs / 1000)}s`
   );
+}
+
+function isGeneratedInventorySource(source) {
+  return Boolean(source?.generatedInventory || source?.inventorySource === "openpostings");
 }
 
 async function runWithConcurrency(items, concurrency, worker) {

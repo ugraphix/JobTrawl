@@ -5,20 +5,17 @@ const sourceHealthNode = document.querySelector("#source-health");
 const resultsCountNode = document.querySelector("#results-count");
 const statusPillNode = document.querySelector("#status-pill");
 const excludedCompaniesNode = document.querySelector("#excludedCompanies");
+const excludedCompaniesSearchNode = document.querySelector("#excludedCompaniesSearch");
+const includedCompaniesNode = document.querySelector("#includedCompanies");
+const includedCompaniesSearchNode = document.querySelector("#includedCompaniesSearch");
 const atsSourceKeysNode = document.querySelector("#atsSourceKeys");
-const websiteSourceKeysNode = document.querySelector("#websiteSourceKeys");
 const excludedCompaniesCountNode = document.querySelector("#excludedCompaniesCount");
+const includedCompaniesCountNode = document.querySelector("#includedCompaniesCount");
 const atsSourcesCountNode = document.querySelector("#atsSourcesCount");
-const websiteSourcesCountNode = document.querySelector("#websiteSourcesCount");
-const websiteCollectionKeyNode = document.querySelector("#websiteCollectionKey");
-const websiteCollectionDescriptionNode = document.querySelector("#websiteCollectionDescription");
-const websiteSourcesGroupNode = document.querySelector("#websiteSourcesGroup");
-const websiteSourcesDropdownNode = document.querySelector("#websiteSourcesDropdown");
 const atsSourcesFieldsetNode = document.querySelector("#atsSourcesFieldset");
 const atsSourcesContentNode = document.querySelector("#atsSourcesContent");
+const includedCompaniesFieldsetNode = document.querySelector("#includedCompaniesFieldset");
 const excludeCompaniesFieldsetNode = document.querySelector("#excludeCompaniesFieldset");
-const additionalSourcesFieldsetNode = document.querySelector("#additionalSourcesFieldset");
-const additionalSourcesContentNode = document.querySelector("#additionalSourcesContent");
 const arrangementsNode = document.querySelector("#arrangements");
 const usOnlyNode = document.querySelector("#usOnly");
 const locationGroupsNode = document.querySelector("#location-groups");
@@ -28,8 +25,7 @@ const myLocationSection = document.querySelector("#my-location-section");
 const distanceMilesNode = document.querySelector("#distanceMiles");
 const locationModeInputs = document.querySelectorAll('input[name="locationMode"]');
 const enableSourceCustomizationNode = document.querySelector("#enableSourceCustomization");
-const searchAtsSourcesNode = document.querySelector("#searchAtsSources");
-const searchAdditionalSourcesNode = document.querySelector("#searchAdditionalSources");
+const sourceCustomizationModeInputs = document.querySelectorAll('input[name="sourceCustomizationMode"]');
 const groupActionButtons = document.querySelectorAll('[data-group-action]');
 const filterDropdownNodes = document.querySelectorAll('.filter-dropdown');
 const SEARCH_REQUEST_TIMEOUT_MS = 60000;
@@ -41,15 +37,15 @@ let geolocationRequested = false;
 
 bootstrap();
 form.addEventListener("submit", handleSearch);
-websiteCollectionKeyNode.addEventListener("change", handleWebsiteCollectionChange);
 enableSourceCustomizationNode.addEventListener("change", syncSourceCustomizationUI);
-searchAtsSourcesNode.addEventListener("change", syncSourceCustomizationUI);
-searchAdditionalSourcesNode.addEventListener("change", syncSourceCustomizationUI);
+sourceCustomizationModeInputs.forEach((input) => input.addEventListener("change", syncSourceCustomizationUI));
 groupActionButtons.forEach((button) => button.addEventListener("click", handleGroupAction));
 locationModeInputs.forEach((input) => input.addEventListener("change", handleLocationModeChange));
 excludedCompaniesNode.addEventListener("change", updateDropdownCounts);
+excludedCompaniesSearchNode?.addEventListener("input", handleExcludedCompaniesSearch);
+includedCompaniesNode?.addEventListener("change", updateDropdownCounts);
+includedCompaniesSearchNode?.addEventListener("input", handleIncludedCompaniesSearch);
 atsSourceKeysNode.addEventListener("change", updateDropdownCounts);
-websiteSourceKeysNode.addEventListener("change", updateDropdownCounts);
 filterDropdownNodes.forEach((dropdown) => dropdown.addEventListener("toggle", handleFilterDropdownToggle));
 document.addEventListener("click", handleDocumentClick);
 
@@ -67,21 +63,21 @@ async function bootstrap() {
 
     renderCheckboxGroup(excludedCompaniesNode, sortByLabel(payload.companies, (value) => value), (value) => ({
       value,
-      label: value,
+      label: formatCompanyLabel(value),
       checked: false,
     }));
 
-    renderCheckboxGroup(atsSourceKeysNode, sortByLabel(payload.atsSources, (source) => source.company), (source) => ({
-      value: source.key,
-      label: `${source.company} (${payload.providers[source.provider] || source.provider})`,
-      checked: true,
+    renderCheckboxGroup(includedCompaniesNode, sortByLabel(payload.companies, (value) => value), (value) => ({
+      value,
+      label: formatCompanyLabel(value),
+      checked: false,
     }));
 
-    websiteCollectionKeyNode.innerHTML = [
-      '<option value="">None</option>',
-      ...sortByLabel(payload.websiteCollections, (collection) => collection.label).map((collection) => `<option value="${escapeAttribute(collection.key)}">${escapeHtml(collection.label)}</option>`),
-    ].join("");
-    renderWebsiteSources("");
+    renderCheckboxGroup(atsSourceKeysNode, payload.atsProviders, (provider) => ({
+      value: provider.key,
+      label: provider.label,
+      checked: false,
+    }));
 
     addLocationGroup();
     syncLocationModeUI();
@@ -119,16 +115,6 @@ async function handleSearch(event) {
   const locationGroups = collectEffectiveLocationGroups(locationMode);
 
   const body = buildSearchPayload(locationMode, locationGroups);
-
-  if (body.sourceSelectionMode === "custom" && !body.searchAtsSources && !body.searchAdditionalSources) {
-    setStatus("Choose sources");
-    resultsCountNode.textContent = "No source types selected";
-    summaryNode.textContent = "Turn on ATS/API sources, Additional sources, or both before searching.";
-    sourceHealthNode.innerHTML = "";
-    resultsNode.className = "results-list empty-state";
-    resultsNode.textContent = "No search ran because no source types were selected.";
-    return;
-  }
 
   try {
     const response = await fetch("/api/search", {
@@ -290,21 +276,19 @@ function syncFilterToolbar(groupNode, visible) {
   toolbar.hidden = !visible;
 }
 
-function handleWebsiteCollectionChange() {
-  renderWebsiteSources(websiteCollectionKeyNode.value);
-}
-
 function syncSourceCustomizationUI() {
   const customizeEnabled = enableSourceCustomizationNode.checked;
-  const useAts = searchAtsSourcesNode.checked;
-  const useAdditional = searchAdditionalSourcesNode.checked;
+  const customizationMode = getSourceCustomizationMode();
 
+  const customizeModeFieldset = document.querySelector("#customizeSearchModeFieldset");
+  customizeModeFieldset.hidden = !customizeEnabled;
   atsSourcesFieldsetNode.hidden = !customizeEnabled;
-  additionalSourcesFieldsetNode.hidden = !customizeEnabled;
-  atsSourcesContentNode.hidden = !useAts;
-  additionalSourcesContentNode.hidden = !useAdditional;
-  atsSourcesFieldsetNode.classList.toggle("fieldset-disabled", customizeEnabled && !useAts);
-  additionalSourcesFieldsetNode.classList.toggle("fieldset-disabled", customizeEnabled && !useAdditional);
+  includedCompaniesFieldsetNode.hidden = !customizeEnabled;
+  atsSourcesContentNode.hidden = customizationMode !== "ats";
+  atsSourcesFieldsetNode.classList.toggle("fieldset-disabled", customizationMode !== "ats");
+  includedCompaniesFieldsetNode.classList.toggle("fieldset-disabled", customizationMode !== "companies");
+  includedCompaniesFieldsetNode.hidden = !customizeEnabled || customizationMode !== "companies";
+  atsSourcesFieldsetNode.hidden = !customizeEnabled || customizationMode !== "ats";
 
   if (!customizeEnabled) {
     filterDropdownNodes.forEach((dropdown) => {
@@ -314,44 +298,30 @@ function syncSourceCustomizationUI() {
   }
 }
 
-function renderWebsiteSources(collectionKey) {
-  const collection = bootstrapData?.websiteCollections?.find((item) => item.key === collectionKey);
-  const hasCollection = Boolean(collection);
+function handleExcludedCompaniesSearch(event) {
+  filterCheckboxGroup(excludedCompaniesNode, event.currentTarget.value);
+}
 
-  websiteSourcesGroupNode.hidden = !hasCollection;
-  websiteSourcesDropdownNode.open = false;
-  syncFilterToolbar(websiteSourcesGroupNode, false);
-
-  if (!collection) {
-    websiteCollectionDescriptionNode.textContent = "";
-    websiteSourceKeysNode.innerHTML = "";
-    updateDropdownCounts();
-    return;
-  }
-
-  websiteCollectionDescriptionNode.textContent = collection.description || "";
-  renderCheckboxGroup(websiteSourceKeysNode, sortByLabel(collection.sources, (source) => source.company), (source) => ({
-    value: source.key,
-    label: `${source.company} (${bootstrapData.providers[source.provider] || source.provider})`,
-    checked: true,
-  }));
-  updateDropdownCounts();
+function handleIncludedCompaniesSearch(event) {
+  filterCheckboxGroup(includedCompaniesNode, event.currentTarget.value);
 }
 
 function buildSourceSelectionPayload() {
+  const sourceSelectionMode = enableSourceCustomizationNode.checked ? "custom" : "all";
+  const sourceCustomizationMode = getSourceCustomizationMode();
+
   return {
-    sourceSelectionMode: enableSourceCustomizationNode.checked ? "custom" : "all",
-    searchAtsSources: enableSourceCustomizationNode.checked ? searchAtsSourcesNode.checked : true,
-    searchAdditionalSources: enableSourceCustomizationNode.checked ? searchAdditionalSourcesNode.checked : true,
-    websiteCollectionKey: websiteCollectionKeyNode.value,
-    selectedAtsSourceKeys: getCheckedValues(atsSourceKeysNode),
-    selectedWebsiteSourceKeys: getCheckedValues(websiteSourceKeysNode),
+    sourceSelectionMode,
+    sourceCustomizationMode,
+    selectedAtsProviderKeys: sourceSelectionMode === "custom" && sourceCustomizationMode === "ats" ? getCheckedValues(atsSourceKeysNode) : [],
+    includedCompanies: sourceSelectionMode === "custom" && sourceCustomizationMode === "companies" ? getCheckedValues(includedCompaniesNode) : [],
   };
 }
 
 function buildSearchPayload(locationMode = getLocationMode(), locationGroups = collectEffectiveLocationGroups(locationMode)) {
   return {
     keyword: form.keyword.value.trim(),
+    keywordMode: form.keywordMode?.value || "strict",
     recency: form.recency.value,
     arrangements: getCheckedValues(arrangementsNode),
     usOnly: Boolean(usOnlyNode?.checked),
@@ -381,8 +351,8 @@ function handleGroupAction(event) {
 
 function updateDropdownCounts() {
   setDropdownCount(excludedCompaniesNode, excludedCompaniesCountNode, "selected");
+  setDropdownCount(includedCompaniesNode, includedCompaniesCountNode, "selected");
   setDropdownCount(atsSourceKeysNode, atsSourcesCountNode, "selected");
-  setDropdownCount(websiteSourceKeysNode, websiteSourcesCountNode, "selected");
 }
 
 function setDropdownCount(container, labelNode, suffix) {
@@ -396,6 +366,10 @@ function setDropdownCount(container, labelNode, suffix) {
 
 function getLocationMode() {
   return [...locationModeInputs].find((input) => input.checked)?.value || "";
+}
+
+function getSourceCustomizationMode() {
+  return [...sourceCustomizationModeInputs].find((input) => input.checked)?.value || "ats";
 }
 
 function syncLocationModeUI() {
@@ -530,8 +504,12 @@ function collectEffectiveLocationGroups(locationMode) {
 }
 
 function renderResults(payload, filters, locationMode) {
-  const datedJobs = payload.jobs.filter((job) => job.postedAt || job.updatedAt);
-  const unknownDateJobs = payload.jobs.filter((job) => !job.postedAt && !job.updatedAt);
+  const usLocationUnknownJobs = payload.jobs.filter((job) => job.usLocationUnknown);
+  const jobsWithKnownUsLocation = payload.jobs.filter((job) => !job.usLocationUnknown);
+  const unknownArrangementJobs = jobsWithKnownUsLocation.filter((job) => job.arrangementUnknown);
+  const primaryJobs = jobsWithKnownUsLocation.filter((job) => !job.arrangementUnknown);
+  const datedJobs = primaryJobs.filter((job) => job.postedAt || job.updatedAt);
+  const unknownDateJobs = primaryJobs.filter((job) => !job.postedAt && !job.updatedAt);
   const totalJobs = payload.jobs.length;
 
   resultsCountNode.textContent = `${totalJobs} matched job${totalJobs === 1 ? "" : "s"} found`;
@@ -548,8 +526,12 @@ function renderResults(payload, filters, locationMode) {
 
   const datedMarkup = datedJobs.length > 0
     ? datedJobs.map(renderJobCard).join("")
-    : totalJobs > 0
-      ? '<div class="empty-state subtle-empty-state">No matches with known dates were found. The matches below have unknown posted dates.</div>'
+    : unknownArrangementJobs.length > 0
+      ? '<div class="empty-state subtle-empty-state">Some matching jobs do not specify remote, hybrid, or onsite status. Those matches are listed below in the unknown work arrangement section.</div>'
+    : usLocationUnknownJobs.length > 0
+      ? '<div class="empty-state subtle-empty-state">Location details were not available in some matching job postings. Those matches are listed below in the unspecified-location section.</div>'
+      : totalJobs > 0
+        ? '<div class="empty-state subtle-empty-state">No matches with known dates were found. The matches below have unknown posted dates.</div>'
       : '<div class="empty-state subtle-empty-state">No jobs with known dates matched these filters.</div>';
 
   const unknownMarkup = unknownDateJobs.length > 0
@@ -563,7 +545,29 @@ function renderResults(payload, filters, locationMode) {
     `
     : "";
 
-  resultsNode.innerHTML = `${datedMarkup}${unknownMarkup}`;
+  const unknownUsLocationMarkup = usLocationUnknownJobs.length > 0
+    ? `
+      <details class="unknown-results-panel">
+        <summary>Show jobs with unspecified location that may still be in the U.S. (${usLocationUnknownJobs.length})</summary>
+        <div class="unknown-results-list">
+          ${usLocationUnknownJobs.map(renderJobCard).join("")}
+        </div>
+      </details>
+    `
+    : "";
+
+  const unknownArrangementMarkup = unknownArrangementJobs.length > 0
+    ? `
+      <details class="unknown-results-panel" ${datedJobs.length === 0 && unknownDateJobs.length === 0 ? "open" : ""}>
+        <summary>Show jobs with unknown work arrangement that may still match your selected arrangement filters (${unknownArrangementJobs.length})</summary>
+        <div class="unknown-results-list">
+          ${unknownArrangementJobs.map(renderJobCard).join("")}
+        </div>
+      </details>
+    `
+    : "";
+
+  resultsNode.innerHTML = `${datedMarkup}${unknownMarkup}${unknownArrangementMarkup}${unknownUsLocationMarkup}`;
 }
 
 function renderSourceHealth(sources) {
@@ -604,6 +608,9 @@ function renderJobCard(job) {
   const distancePill = Number.isFinite(job.distanceMiles)
     ? `<span class="pill">${escapeHtml(`${job.distanceMiles.toFixed(1)} miles away`)}</span>`
     : "";
+  const usUnknownPill = job.usLocationUnknown
+    ? '<span class="pill">U.S. match unknown</span>'
+    : "";
 
   return `
     <article class="job-card">
@@ -621,6 +628,7 @@ function renderJobCard(job) {
         <span class="pill">${escapeHtml(job.locationLabel || "Unspecified")}</span>
         ${job.team ? `<span class="pill">${escapeHtml(job.team)}</span>` : ""}
         ${distancePill}
+        ${usUnknownPill}
       </div>
       <div class="job-meta">
         <div>${escapeHtml(dateLine)}</div>
@@ -637,8 +645,14 @@ function renderJobCard(job) {
 function buildSummary(payload, filters, locationMode) {
   const successText = `${payload.meta.successfulSources} of ${payload.meta.searchedSources} sources responded`;
   const unknownDateText = `${payload.jobs.filter((job) => !job.postedAt && !job.updatedAt).length} jobs have unknown dates.`;
+  const unknownUsLocationText = filters.usOnly
+    ? `${payload.jobs.filter((job) => job.usLocationUnknown).length} jobs have unspecified location and are shown separately.`
+    : "";
+  const unknownArrangementText = filters.arrangements.length > 0
+    ? `${payload.jobs.filter((job) => job.arrangementUnknown).length} jobs have unknown work arrangement and are shown separately.`
+    : "";
   const keywordText = filters.keyword
-    ? `Keyword filter: ${filters.keyword}.`
+    ? `Keyword filter: ${filters.keyword}. ${filters.keywordMode === "loose" ? "Loose keyword search is active." : "Strict keyword search is active."}`
     : "No keyword filter is active.";
   const arrangementText = filters.arrangements.length > 0
     ? `Arrangements: ${filters.arrangements.join(", ")}.`
@@ -660,7 +674,7 @@ function buildSummary(payload, filters, locationMode) {
     }
   }
 
-  return `${successText}. ${unknownDateText} ${keywordText} ${arrangementText} ${countryText} ${locationText}`;
+  return `${successText}. ${unknownDateText} ${unknownUsLocationText} ${unknownArrangementText} ${keywordText} ${arrangementText} ${countryText} ${locationText}`;
 }
 
 function renderLoadingState() {
@@ -709,6 +723,14 @@ function renderCheckboxGroup(node, items, mapItem) {
     .join("");
 }
 
+function filterCheckboxGroup(node, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  [...node.querySelectorAll(".checkbox-item")].forEach((item) => {
+    const label = normalizeSearchText(item.textContent);
+    item.hidden = Boolean(normalizedQuery) && !label.includes(normalizedQuery);
+  });
+}
+
 function getCheckedValues(node) {
   return [...node.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
 }
@@ -727,6 +749,75 @@ function formatDateLine(job) {
 
 function titleCase(value) {
   return String(value).charAt(0).toUpperCase() + String(value).slice(1);
+}
+
+function formatCompanyLabel(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const exactOverrides = new Map([
+    ["openai", "OpenAI"],
+    ["xai", "xAI"],
+    ["ibm", "IBM"],
+    ["f5", "F5"],
+    ["t-mobile", "T-Mobile"],
+    ["uw medicine", "UW Medicine"],
+    ["sap concur", "SAP Concur"],
+    ["ansible government solutions", "Ansible Government Solutions"],
+  ]);
+
+  const normalized = raw.toLowerCase();
+  if (exactOverrides.has(normalized)) {
+    return exactOverrides.get(normalized);
+  }
+
+  if (/[A-Z]/.test(raw.slice(1))) {
+    return raw;
+  }
+
+  return raw
+    .split(/\s+/)
+    .map((word) => word
+      .split("-")
+      .map((segment) => formatCompanySegment(segment))
+      .join("-"))
+    .join(" ");
+}
+
+function formatCompanySegment(segment) {
+  const raw = String(segment || "");
+  if (!raw) {
+    return "";
+  }
+
+  if (/^[A-Z0-9&/]+$/.test(raw)) {
+    return raw;
+  }
+
+  const tokenOverrides = new Map([
+    ["ai", "AI"],
+    ["hr", "HR"],
+    ["it", "IT"],
+    ["ml", "ML"],
+    ["qa", "QA"],
+    ["ux", "UX"],
+    ["ui", "UI"],
+    ["aws", "AWS"],
+    ["ukg", "UKG"],
+  ]);
+
+  const normalized = raw.toLowerCase();
+  if (tokenOverrides.has(normalized)) {
+    return tokenOverrides.get(normalized);
+  }
+
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function normalizeSearchText(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function sortByLabel(items, getLabel) {

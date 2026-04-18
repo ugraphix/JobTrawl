@@ -1270,6 +1270,9 @@ function looksLikeJobTitle(text) {
     "communications",
     "corporate",
     "corporate solutions",
+    "cookie policy",
+    "cookie preferences",
+    "cookie settings",
     "eeo statement",
     "eeo statement and accommodation request",
     "find out more about harborview",
@@ -1316,6 +1319,9 @@ function looksLikeJobTitle(text) {
     "our story",
     "career areas",
     "our events",
+    "preferences",
+    "privacy policy",
+    "privacy choices",
     "recently viewed jobs",
   ]);
 
@@ -1325,16 +1331,20 @@ function looksLikeJobTitle(text) {
 
   const blockedTitlePatterns = [
     /\b(sign in|sign-on|forgot password|applicant login)\b/i,
-    /\b(team members?|employees?|benefits|locations|culture|about us|blog)\b/i,
+    /\b(team members?|employees?|benefits|cookie|locations|culture|about us|blog)\b/i,
     /\b(eeo statement|accommodation request|physicians and providers|view my profile)\b/i,
     /\b(saved jobs|job alerts|talent community|join our team)\b/i,
     /\b(application process|job shadowing|learning and development|meet our recruiters)\b/i,
-    /\b(read before you apply|find out more about|research careers|linkedin|our story|career areas|life at)\b/i,
+    /\b(read before you apply|find out more about|privacy policy|privacy choices|terms of use|research careers|linkedin|our story|career areas|life at)\b/i,
     /^(title|department|location|administration|commercial|communications|corporate|finance|providers)$/i,
     /\bsearch\b.*\bjobs?\b/i,
   ];
 
-  return !blockedTitlePatterns.some((pattern) => pattern.test(value));
+  if (blockedTitlePatterns.some((pattern) => pattern.test(value))) {
+    return false;
+  }
+
+  return true;
 }
 
 function isExcludedJobLink(text, href) {
@@ -1353,6 +1363,7 @@ function isExcludedJobLink(text, href) {
     "/team-members",
     "/team-memberships",
     "/blog",
+    "/cookie",
     "/events",
     "/benefits",
     "/eeo",
@@ -1361,12 +1372,47 @@ function isExcludedJobLink(text, href) {
     "/about",
     "/culture",
     "/faqs",
+    "/preferences",
+    "/privacy",
     "/profile",
+    "/terms",
   ];
 
   if (blockedHrefFragments.some((fragment) => hrefValue.includes(fragment))) {
     return true;
   }
 
-  return /\b(login|saved jobs|talent network|team members?|view my profile|eeo statement)\b/i.test(textValue);
+  if (/\b(cookie|login|preferences|privacy|saved jobs|talent network|team members?|terms|view my profile|eeo statement)\b/i.test(textValue)) {
+    return true;
+  }
+
+  return !hasCareerPageJobSignals(textValue, hrefValue);
+}
+
+function hasCareerPageJobSignals(textValue, hrefValue) {
+  const jobUrlSignals = [
+    "/job/",
+    "/jobs/",
+    "/job-",
+    "jobid=",
+    "job_id=",
+    "jobreqid",
+    "gh_jid",
+    "requisition",
+    "opening",
+    "/opening/",
+    "/position/",
+    "/positions/",
+    "/posting/",
+    "/postings/",
+    "/opportunitydetail",
+    "/vacancy/",
+    "careersection",
+  ];
+
+  if (jobUrlSignals.some((signal) => hrefValue.includes(signal))) {
+    return true;
+  }
+
+  return /\b(account(ant| executive| manager)?|administrator|analyst|architect|assistant|associate|attorney|advisor|counsel|consultant|coordinator|designer|developer|director|editor|engineer|head|intern|lead|manager|officer|partner|physician|nurse|practitioner|principal|producer|product manager|product owner|product marketer|product marketing|program manager|programmer|project manager|recruiter|representative|research(?:er| scientist)?|scientist|software|specialist|strategist|supervisor|technician|therapist|vp|vice president|writer)\b/i.test(textValue);
 }
