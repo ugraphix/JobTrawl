@@ -11,7 +11,7 @@ const DEFAULT_SOURCE_MAX_AGE_MS = Number(process.env.CACHE_SOURCE_MAX_AGE_MS || 
 const DEFAULT_TTL_MS = Number(process.env.CACHE_POSTING_TTL_MS || 45 * 24 * 60 * 60 * 1000);
 const DEFAULT_SYNC_CONCURRENCY = Math.max(1, Number(process.env.CACHE_SYNC_CONCURRENCY || 4));
 const DEFAULT_SEARCH_CONCURRENCY = Math.max(1, Number(process.env.CACHE_SEARCH_CONCURRENCY || 8));
-const DEFAULT_SOURCE_SEARCH_TIMEOUT_MS = Math.max(1000, Number(process.env.CACHE_SOURCE_SEARCH_TIMEOUT_MS || 12000));
+const DEFAULT_SOURCE_SEARCH_TIMEOUT_MS = Math.max(1000, Number(process.env.CACHE_SOURCE_SEARCH_TIMEOUT_MS || 45000));
 const DEFAULT_SOURCE_SYNC_TIMEOUT_MS = Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, Number(process.env.CACHE_SOURCE_SYNC_TIMEOUT_MS || 60000));
 
 let database = null;
@@ -211,8 +211,8 @@ export async function loadSourceResultsForSearch(sources, filters = {}, options 
 }
 
 async function loadSingleSourceResult(source, filters, allowSync) {
-  const existingJobs = readCachedJobsForSource(source.key);
-  const hasFreshCache = !isSourceStale(source.key);
+  const existingJobs = safeReadCachedJobsForSource(source.key);
+  const hasFreshCache = safeIsSourceFresh(source.key);
   const requiresBatchCaching = isGeneratedInventorySource(source);
 
   if (hasFreshCache && existingJobs.length > 0) {
@@ -236,9 +236,21 @@ async function loadSingleSourceResult(source, filters, allowSync) {
 
   try {
     await syncSourceToCache(source, filters, { timeoutMs: DEFAULT_SOURCE_SEARCH_TIMEOUT_MS });
-    return { source, jobs: readCachedJobsForSource(source.key), error: null };
+    return { source, jobs: safeReadCachedJobsForSource(source.key), error: null };
   } catch (error) {
-    const fallbackJobs = readCachedJobsForSource(source.key);
+    const fallbackJobs = safeReadCachedJobsForSource(source.key);
+    if (fallbackJobs.length === 0) {
+      try {
+        const liveJobs = await fetchJobsForSourceWithTimeout(source, filters, DEFAULT_SOURCE_SEARCH_TIMEOUT_MS);
+        return { source, jobs: liveJobs, error: null };
+      } catch (liveError) {
+        return {
+          source,
+          jobs: [],
+          error: liveError?.message || error?.message || String(liveError || error),
+        };
+      }
+    }
     return {
       source,
       jobs: fallbackJobs,
@@ -471,6 +483,14 @@ function isSourceStale(sourceKey) {
   return Date.now() - lastSyncedAt > DEFAULT_SOURCE_MAX_AGE_MS;
 }
 
+function safeIsSourceFresh(sourceKey) {
+  try {
+    return !isSourceStale(sourceKey);
+  } catch {
+    return false;
+  }
+}
+
 function readCachedJobsForSource(sourceKey) {
   initCacheDb();
 
@@ -512,6 +532,14 @@ async function fetchJobsForSourceWithTimeout(source, filters, timeoutMs) {
     timeoutMs,
     `${source.company} timed out after ${Math.ceil(timeoutMs / 1000)}s`
   );
+}
+
+function safeReadCachedJobsForSource(sourceKey) {
+  try {
+    return readCachedJobsForSource(sourceKey);
+  } catch {
+    return [];
+  }
 }
 
 function isGeneratedInventorySource(source) {
