@@ -18,6 +18,7 @@ import { fetchJobApsJobs } from "./jobaps.js";
 import { fetchJobviteJobs } from "./jobvite.js";
 import { fetchLeverJobs } from "./lever.js";
 import { fetchManatalJobs } from "./manatal.js";
+import { fetchPcsxJobs } from "./pcsx.js";
 import { fetchRecruiteeJobs } from "./recruitee.js";
 import { fetchSaphrcloudJobs } from "./saphrcloud.js";
 import { fetchSlalomJobs } from "./slalom.js";
@@ -54,6 +55,7 @@ export const PROVIDER_LABELS = {
   jobvite: "Jobvite",
   lever: "Lever",
   manatal: "Manatal",
+  pcsx: "PCSX Careers",
   recruitee: "Recruitee",
   saphrcloud: "Saphrcloud",
   slalom: "Slalom Careers",
@@ -91,6 +93,7 @@ const providerMap = {
   jobvite: fetchJobviteJobs,
   lever: fetchLeverJobs,
   manatal: fetchManatalJobs,
+  pcsx: fetchPcsxJobs,
   recruitee: fetchRecruiteeJobs,
   saphrcloud: fetchSaphrcloudJobs,
   slalom: fetchSlalomJobs,

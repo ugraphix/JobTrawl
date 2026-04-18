@@ -18,7 +18,7 @@ import {
 const publicDir = path.join(process.cwd(), "public");
 const dataDir = path.join(process.cwd(), "data");
 const serverLogPath = path.join(dataDir, "server.log");
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3001;
 const DEFAULT_COMPANIES = [
   "Amazon",
   "Microsoft",
@@ -486,6 +486,9 @@ function contentType(filePath) {
   }
   if (filePath.endsWith(".js")) {
     return "application/javascript; charset=utf-8";
+  }
+  if (filePath.endsWith(".svg")) {
+    return "image/svg+xml";
   }
   if (filePath.endsWith(".json")) {
     return "application/json; charset=utf-8";

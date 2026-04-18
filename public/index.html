@@ -4,21 +4,20 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>JobTrawl</title>
+    <link rel="icon" type="image/png" sizes="64x64" href="/jobtrawl-favicon.png">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <div class="page-shell">
-      <header class="hero">
-        <p class="eyebrow">Job Search Console</p>
-        <h1>JobTrawl</h1>
-        <p class="hero-copy">
-          Search ATS sources and employer career pages in one place, filter by keyword, date, work arrangement, and location, and surface direct job listings from the companies you want to track.
-        </p>
-      </header>
-
       <main class="layout">
-        <section class="panel filters-panel">
-          <form id="search-form" class="filters-form">
+        <div class="sidebar-column">
+          <header class="hero">
+            <img class="hero-logo" src="/jobtrawl-logo.png" alt="JobTrawl">
+            <p class="eyebrow">Job Search Console</p>
+          </header>
+
+          <section class="panel filters-panel">
+            <form id="search-form" class="filters-form">
             <label>
               <span>Keyword or title</span>
               <input id="keyword" name="keyword" type="text" placeholder="Product Manager, Platform, Growth...">
@@ -97,27 +96,27 @@
               </label>
             </fieldset>
 
-            <fieldset id="excludeCompaniesFieldset" class="filter-fieldset">
-              <legend>Exclude companies</legend>
+            <fieldset id="includedCompaniesFieldset" class="filter-fieldset">
+              <legend>Specific companies</legend>
               <div class="filter-group">
                 <div class="filter-toolbar" hidden>
-                  <button type="button" class="text-button" data-group-action="select-all" data-target="excludedCompanies">Select all</button>
-                  <button type="button" class="text-button" data-group-action="clear-all" data-target="excludedCompanies">Clear all</button>
+                  <button type="button" class="text-button" data-group-action="select-all" data-target="includedCompanies">Select all</button>
+                  <button type="button" class="text-button" data-group-action="clear-all" data-target="includedCompanies">Clear all</button>
                 </div>
                 <details class="filter-dropdown">
                   <summary>
                     <span class="dropdown-label">Choose companies</span>
-                    <span id="excludedCompaniesCount" class="dropdown-count">0 selected</span>
+                    <span id="includedCompaniesCount" class="dropdown-count">0 selected</span>
                   </summary>
                   <div class="dropdown-panel">
                     <input
-                      id="excludedCompaniesSearch"
+                      id="includedCompaniesSearch"
                       class="dropdown-search"
                       type="text"
                       placeholder="Search companies"
                       autocomplete="off"
                     >
-                    <div id="excludedCompanies" class="checkbox-grid tall-grid"></div>
+                    <div id="includedCompanies" class="checkbox-grid tall-grid"></div>
                   </div>
                 </details>
               </div>
@@ -137,7 +136,7 @@
               <div class="keyword-mode-options customize-search-options">
                 <label class="checkbox-item keyword-mode-item">
                   <input type="radio" name="sourceCustomizationMode" value="companies" checked>
-                  <span>Specific companies</span>
+                  <span>Exclude companies</span>
                 </label>
                 <label class="checkbox-item keyword-mode-item">
                   <input type="radio" name="sourceCustomizationMode" value="ats">
@@ -165,35 +164,36 @@
               </div>
             </fieldset>
 
-            <fieldset id="includedCompaniesFieldset" class="filter-fieldset hidden-section" hidden>
-              <legend>Specific companies</legend>
+            <fieldset id="excludeCompaniesFieldset" class="filter-fieldset hidden-section" hidden>
+              <legend>Exclude companies</legend>
               <div class="filter-group">
                 <div class="filter-toolbar" hidden>
-                  <button type="button" class="text-button" data-group-action="select-all" data-target="includedCompanies">Select all</button>
-                  <button type="button" class="text-button" data-group-action="clear-all" data-target="includedCompanies">Clear all</button>
+                  <button type="button" class="text-button" data-group-action="select-all" data-target="excludedCompanies">Select all</button>
+                  <button type="button" class="text-button" data-group-action="clear-all" data-target="excludedCompanies">Clear all</button>
                 </div>
                 <details class="filter-dropdown">
                   <summary>
                     <span class="dropdown-label">Choose companies</span>
-                    <span id="includedCompaniesCount" class="dropdown-count">0 selected</span>
+                    <span id="excludedCompaniesCount" class="dropdown-count">0 selected</span>
                   </summary>
                   <div class="dropdown-panel">
                     <input
-                      id="includedCompaniesSearch"
+                      id="excludedCompaniesSearch"
                       class="dropdown-search"
                       type="text"
                       placeholder="Search companies"
                       autocomplete="off"
                     >
-                    <div id="includedCompanies" class="checkbox-grid tall-grid"></div>
+                    <div id="excludedCompanies" class="checkbox-grid tall-grid"></div>
                   </div>
                 </details>
               </div>
             </fieldset>
 
-            <button class="search-button" type="submit">Search jobs</button>
-          </form>
-        </section>
+              <button class="search-button" type="submit">Search jobs</button>
+            </form>
+          </section>
+        </div>
 
         <section class="panel results-panel">
           <div class="results-toolbar">
@@ -209,7 +209,7 @@
           <div id="summary" class="summary"></div>
           <div id="source-health" class="source-health"></div>
           <div id="results" class="results-list empty-state">
-            Choose filters and run a search. The tool will aggregate configured ATS boards and show the newest matches first.
+            Choose filters and run a search. The tool will search configured ATS boards and employer career pages, then show the newest matches first.
           </div>
         </section>
       </main>

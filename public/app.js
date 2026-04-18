@@ -28,7 +28,7 @@ const enableSourceCustomizationNode = document.querySelector("#enableSourceCusto
 const sourceCustomizationModeInputs = document.querySelectorAll('input[name="sourceCustomizationMode"]');
 const groupActionButtons = document.querySelectorAll('[data-group-action]');
 const filterDropdownNodes = document.querySelectorAll('.filter-dropdown');
-const SEARCH_REQUEST_TIMEOUT_MS = 60000;
+const SEARCH_REQUEST_TIMEOUT_MS = 120000;
 
 let bootstrapData = null;
 let locationGroupCounter = 0;
@@ -282,13 +282,11 @@ function syncSourceCustomizationUI() {
 
   const customizeModeFieldset = document.querySelector("#customizeSearchModeFieldset");
   customizeModeFieldset.hidden = !customizeEnabled;
-  atsSourcesFieldsetNode.hidden = !customizeEnabled;
-  includedCompaniesFieldsetNode.hidden = !customizeEnabled;
+  atsSourcesFieldsetNode.hidden = !customizeEnabled || customizationMode !== "ats";
+  excludeCompaniesFieldsetNode.hidden = !customizeEnabled || customizationMode !== "companies";
   atsSourcesContentNode.hidden = customizationMode !== "ats";
   atsSourcesFieldsetNode.classList.toggle("fieldset-disabled", customizationMode !== "ats");
-  includedCompaniesFieldsetNode.classList.toggle("fieldset-disabled", customizationMode !== "companies");
-  includedCompaniesFieldsetNode.hidden = !customizeEnabled || customizationMode !== "companies";
-  atsSourcesFieldsetNode.hidden = !customizeEnabled || customizationMode !== "ats";
+  excludeCompaniesFieldsetNode.classList.toggle("fieldset-disabled", customizationMode !== "companies");
 
   if (!customizeEnabled) {
     filterDropdownNodes.forEach((dropdown) => {
