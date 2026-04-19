@@ -37,40 +37,40 @@ For most users, the important idea is simple: JobTrawl pulls direct listings fro
 
 ```mermaid
 flowchart TD
-    A["Open UI"] --> B["GET /api/bootstrap"]
-    B --> C["Load sources and locations"]
-    C --> D["Build filters and source options"]
-    D --> E["Show search form"]
+    A["Open JobTrawl<br/>in your browser"] --> B["Run bootstrap request<br/>for startup data"]
+    B --> C["Load configured sources<br/>and location lists"]
+    C --> D["Build filters, companies,<br/>and source options"]
+    D --> E["Show the search form<br/>in the browser"]
 
-    E --> F["Submit search"]
-    F --> G["POST /api/search"]
-    G --> H["Merge source config"]
-    H --> I{"Search mode?"}
-    I -->|All| J["Use default sources"]
-    I -->|Companies| K["Filter by included companies"]
-    I -->|ATS/API| L["Filter by ATS providers"]
-    J --> M["Check cache first"]
-    K --> M
-    L --> M
-    M --> N{"Fresh cache?"}
+    E --> F["Submit a search"]
+    F --> G["Load the current<br/>source configuration"]
+    G --> H{"Which search<br/>mode is active?"}
+    H -->|All| I["Use the default<br/>source set"]
+    H -->|Companies| J["Limit to selected<br/>companies"]
+    H -->|ATS/API| K["Limit to selected<br/>ATS providers"]
+    I --> L["Check the local cache<br/>first"]
+    J --> L
+    K --> L
+    L --> M{"Is fresh cached<br/>data available?"}
 
-    N -->|Yes| O["Read jobs from cache"]
-    N -->|No| P{"Generated source?"}
-    P -->|Yes| Q["Use any cached jobs for that source"]
-    P -->|No| R["Fetch through adapter"]
+    M -->|Yes| N["Read jobs from<br/>local cache"]
+    M -->|No| O{"Is this a generated<br/>inventory source?"}
+    O -->|Yes| P["Use any existing cached<br/>jobs for that source"]
+    O -->|No| Q["Fetch jobs through<br/>the source adapter"]
 
-    R --> S{"ATS/API or career page?"}
-    S -->|ATS/API| T["Call provider endpoint and map response"]
-    S -->|Career page| U["Fetch page data and extract jobs"]
+    Q --> R{"Does the source use<br/>an API or a career page?"}
+    R -->|API| S["Call the provider endpoint<br/>and map the response"]
+    R -->|Career page| T["Fetch public page data<br/>and extract jobs"]
 
-    T --> V["Normalize jobs"]
-    U --> V
-    V --> W["Write to cache when possible"]
-    O --> X["Apply search filters"]
-    Q --> X
-    W --> X
-    X --> Y["Deduplicate and sort"]
-    Y --> Z["Return results and source health"]
+    S --> U["Normalize jobs into<br/>one shared format"]
+    T --> U
+    U --> V["Write jobs back to<br/>local cache"]
+    N --> W["Apply the user's<br/>search filters"]
+    P --> W
+    V --> W
+    W --> X["Remove duplicate<br/>job listings"]
+    X --> Y["Sort by the newest<br/>known date"]
+    Y --> Z["Return results and<br/>source health data"]
 ```
 
 The chart is intentionally simplified so it stays readable in GitHub's Mermaid viewer. The sections below explain the same flow in more detail.
