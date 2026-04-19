@@ -37,41 +37,43 @@ For most users, the important idea is simple: JobTrawl pulls direct listings fro
 
 ```mermaid
 flowchart TD
-    A["User opens JobTrawl UI"] --> B["GET /api/bootstrap"]
-    B --> C["Load sources and location config"]
-    C --> D["Build filter lists, company lists, and source options"]
-    D --> E["Show filters in the browser"]
+    A["Open UI"] --> B["GET /api/bootstrap"]
+    B --> C["Load sources and locations"]
+    C --> D["Build filters and source options"]
+    D --> E["Show search form"]
 
-    E --> F["User submits search"]
+    E --> F["Submit search"]
     F --> G["POST /api/search"]
-    G --> H["Merge curated + generated source config"]
-    H --> I{"Customized search mode?"}
-    I -->|All sources| J["Use default source set"]
-    I -->|Specific companies| K["Filter sources by included companies"]
-    I -->|ATS/API sources| L["Filter sources by selected ATS providers"]
-    J --> M["Try cached jobs first"]
+    G --> H["Merge source config"]
+    H --> I{"Search mode?"}
+    I -->|All| J["Use default sources"]
+    I -->|Companies| K["Filter by included companies"]
+    I -->|ATS/API| L["Filter by ATS providers"]
+    J --> M["Check cache first"]
     K --> M
     L --> M
-    M --> N{"Fresh cache exists?"}
+    M --> N{"Fresh cache?"}
 
-    N -->|Yes| O["Read normalized jobs from local cache"]
-    N -->|No| P{"Generated inventory source?"}
-    P -->|Yes| Q["Return whatever cached jobs already exist for that source"]
-    P -->|No| R["Fetch source through provider adapter"]
+    N -->|Yes| O["Read jobs from cache"]
+    N -->|No| P{"Generated source?"}
+    P -->|Yes| Q["Use any cached jobs for that source"]
+    P -->|No| R["Fetch through adapter"]
 
-    R --> S{"ATS/API or public career page?"}
+    R --> S{"ATS/API or career page?"}
     S -->|ATS/API| T["Call provider endpoint and map response"]
-    S -->|Career page| U["Fetch public HTML / sitemap / embedded JSON and extract jobs"]
+    S -->|Career page| U["Fetch page data and extract jobs"]
 
-    T --> V["Normalize jobs into shared structure"]
+    T --> V["Normalize jobs"]
     U --> V
-    V --> W["Write jobs to local cache when possible"]
-    O --> X["Apply keyword, recency, arrangement, U.S., location, distance, and exclusion filters"]
+    V --> W["Write to cache when possible"]
+    O --> X["Apply search filters"]
     Q --> X
     W --> X
-    X --> Y["Deduplicate and sort newest first"]
-    Y --> Z["Return jobs plus source health to UI"]
+    X --> Y["Deduplicate and sort"]
+    Y --> Z["Return results and source health"]
 ```
+
+The chart is intentionally simplified so it stays readable in GitHub's Mermaid viewer. The sections below explain the same flow in more detail.
 
 ## Filters
 
@@ -272,10 +274,10 @@ Coverage quality varies by provider and by company implementation. API-backed ad
 ### Before you start
 
 - You need an internet connection because JobTrawl fetches live job listings from public job boards and career pages.
-- You need `Node.js 20` or newer installed on your computer.
-- `npm` usually comes with Node.js, so you normally do not need to install it separately.
+- You need `Node.js 22` or newer installed on your computer.
+- `npm` usually comes with Node.js, so you don't need to install it separately.
 
-If you are not technical, the easiest way to think about this is:
+If you're not technical, the easiest way to think about setup is:
 
 1. install Node.js
 2. download the JobTrawl folder
@@ -289,16 +291,16 @@ If you are not technical, the easiest way to think about this is:
 1. Go to [https://nodejs.org](https://nodejs.org)
 2. Download the current `LTS` version for your computer
 3. Run the installer
-4. Accept the default options unless you have a reason to change them
-5. When installation finishes, restart your terminal if one was already open
+4. Accept the default options unless you want to change where Node is installed
+5. When the installation finishes, restart your terminal if you already had one open
 
-To check that Node.js installed correctly, open a terminal and run:
+To make sure Node.js installed correctly, open a terminal and run:
 
 ```powershell
 node -v
 ```
 
-You should see a version number such as `v20.x.x` or newer.
+You should see a version number such as `v22.x.x` or newer.
 
 If that works, check npm too:
 
@@ -375,6 +377,7 @@ Open that address in your web browser.
 - If `npm` does not work in PowerShell, use `npm.cmd`.
 - If `http://localhost:3001` does not load, check the terminal window for an error message.
 - If port `3001` is already being used by another app, stop that app or change the `PORT` environment variable before starting JobTrawl.
+- If you're on an older version of Node.js, upgrade to Node `22` or newer and try again.
 
 ### Development mode
 
