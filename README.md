@@ -270,7 +270,7 @@ Coverage quality varies by provider and by company implementation. API-backed ad
 ### Download
 
 ```powershell
-git clone https://github.com/<your-account>/JobTrawl.git
+git clone https://github.com/ugraphix/JobTrawl.git
 cd JobTrawl
 ```
 
