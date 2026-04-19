@@ -22,12 +22,16 @@ The result is a local search console that can cover both carefully chosen employ
 
 ## How it works
 
-At a high level, JobTrawl does four things:
+At a high level, a search in JobTrawl works like this:
 
-1. Loads source definitions from `config/sources.json` and `config/generated-ats-sources.json`
-2. Fetches jobs from each source using an adapter for that ATS or career-page pattern
-3. Stores normalized jobs in a local cache database under `data/jobs-cache.sqlite`
-4. Applies search filters and returns one unified results list to the UI
+1. JobTrawl loads its configured job sources and location lists.
+2. When you run a search, it chooses which sources to search based on your settings:
+   all default sources, specific companies, or selected ATS/API provider families.
+3. It checks the local cache first so it does not have to refetch every source every time.
+4. If fresh cached results are not available, it fetches jobs through the right adapter for that source.
+5. It converts all jobs into one shared format, applies your filters, removes duplicates, sorts the results, and shows them in one list.
+
+For most users, the important idea is simple: JobTrawl pulls direct listings from many company-controlled sources, standardizes them, and gives you one place to search them.
 
 ### Search flow
 
@@ -35,34 +39,38 @@ At a high level, JobTrawl does four things:
 flowchart TD
     A["User opens JobTrawl UI"] --> B["GET /api/bootstrap"]
     B --> C["Load sources and location config"]
-    C --> D["Show filters in the browser"]
+    C --> D["Build filter lists, company lists, and source options"]
+    D --> E["Show filters in the browser"]
 
-    D --> E["User submits search"]
-    E --> F["POST /api/search"]
-    F --> G["Merge curated + generated source config"]
-    G --> H{"Customized search mode?"}
-    H -->|All sources| I["Use default source set"]
-    H -->|Specific companies| J["Filter sources by included companies"]
-    H -->|ATS/API sources| K["Filter sources by selected ATS providers"]
-    I --> L["Load cached jobs when available"]
-    J --> L
-    K --> L
-    L --> M{"Fresh cache exists?"}
+    E --> F["User submits search"]
+    F --> G["POST /api/search"]
+    G --> H["Merge curated + generated source config"]
+    H --> I{"Customized search mode?"}
+    I -->|All sources| J["Use default source set"]
+    I -->|Specific companies| K["Filter sources by included companies"]
+    I -->|ATS/API sources| L["Filter sources by selected ATS providers"]
+    J --> M["Try cached jobs first"]
+    K --> M
+    L --> M
+    M --> N{"Fresh cache exists?"}
 
-    M -->|Yes| N["Read normalized jobs from SQLite cache"]
-    M -->|No| O["Fetch source through provider adapter"]
+    N -->|Yes| O["Read normalized jobs from local cache"]
+    N -->|No| P{"Generated inventory source?"}
+    P -->|Yes| Q["Return whatever cached jobs already exist for that source"]
+    P -->|No| R["Fetch source through provider adapter"]
 
-    O --> P{"ATS/API or public career page?"}
-    P -->|ATS/API| Q["Call provider endpoint and map response"]
-    P -->|Career page| R["Fetch public HTML / sitemap / embedded JSON and extract jobs"]
+    R --> S{"ATS/API or public career page?"}
+    S -->|ATS/API| T["Call provider endpoint and map response"]
+    S -->|Career page| U["Fetch public HTML / sitemap / embedded JSON and extract jobs"]
 
-    Q --> S["Normalize jobs into shared structure"]
-    R --> S
-    S --> T["Write jobs to local cache"]
-    T --> U["Apply keyword, recency, arrangement, U.S., location, distance, inclusion, and exclusion filters"]
-    N --> U
-    U --> V["Deduplicate and sort newest first"]
-    V --> W["Return jobs + per-source health to UI"]
+    T --> V["Normalize jobs into shared structure"]
+    U --> V
+    V --> W["Write jobs to local cache when possible"]
+    O --> X["Apply keyword, recency, arrangement, U.S., location, distance, and exclusion filters"]
+    Q --> X
+    W --> X
+    X --> Y["Deduplicate and sort newest first"]
+    Y --> Z["Return jobs plus source health to UI"]
 ```
 
 ## Filters
@@ -98,11 +106,11 @@ The UI in `public/index.html` and `public/app.js` supports these filters:
 
 ## Source strategies
 
-JobTrawl uses adapters in `src/lib/adapters/` to fetch jobs. Those adapters generally fall into two buckets.
+JobTrawl uses adapters in `src/lib/adapters/` to fetch jobs. In practice, it gets job data in two main ways.
 
 ### 1. Direct ATS / public API integrations
 
-When an ATS exposes a stable endpoint, JobTrawl calls that endpoint directly and converts the response into a common internal shape.
+When an ATS exposes a stable endpoint, JobTrawl requests job data directly from that endpoint and converts the response into a common internal shape.
 
 Examples in this repo include:
 
@@ -118,34 +126,28 @@ Examples in this repo include:
 - `Zoho`
 - many other ATS-specific adapters now included under `src/lib/adapters/`
 
-What this approach is doing:
+This approach:
 
-- Sending HTTP requests to a provider-specific job endpoint
-- Paging through results when needed
-- Pulling fields like title, location, department, posted date, apply URL, and job description
-- Converting each provider response into a shared normalized job object
+- sends requests to a provider-specific jobs endpoint
+- pages through results when needed
+- pulls fields like title, location, department, posted date, apply URL, and job description
+- converts each response into the same shared job format used throughout the app
 
 This is the cleanest and most reliable path because the source data is already structured.
 
 ### 2. Public career-page parsing and scraping
 
-Some employers expose jobs only through public website pages instead of a reusable anonymous API. In those cases, JobTrawl fetches the public career page and extracts jobs from the markup or embedded page data.
+Some employers do not expose a clean public API. In those cases, JobTrawl fetches the public career page and extracts jobs from the page itself.
 
 This logic lives mostly in `src/lib/adapters/hosted-board.js`.
 
-What this approach is doing:
+This approach can include:
 
-- Downloading public HTML from a careers page
-- Checking for structured job data such as:
-- JSON-LD job postings
-- embedded preload state
-- ATS-specific inline JSON blobs
-- Phenom or similar embedded datasets
-- job sitemaps
-- provider-specific HTML list layouts
-- Falling back to link extraction when a page looks like a job list but does not expose a cleaner data structure
-- Filtering out non-job links like login pages, blog pages, talent networks, privacy pages, and generic careers landing pages
-- Optionally opening some job detail pages to enrich missing posted dates
+- downloading public HTML from a careers page
+- looking for structured job data such as JSON-LD, embedded page state, ATS-specific JSON blobs, job sitemaps, or known provider layouts
+- falling back to link extraction when a page clearly contains job listings but does not expose a cleaner data source
+- filtering out non-job links such as login pages, blog pages, talent networks, privacy pages, and generic careers landing pages
+- optionally opening some job detail pages to fill in missing posted dates
 
 This is effectively "scraping" public employer career pages, but it is focused on publicly visible job content and tries structured data first before falling back to looser HTML parsing.
 
@@ -158,9 +160,9 @@ There is no single public API for every ATS and every employer website. JobTrawl
 
 That hybrid approach is the main reason the project can support a wide range of sources.
 
-## Normalization and filtering pipeline
+## What happens after jobs are found
 
-Regardless of where a job comes from, adapters try to normalize it into a common structure with fields such as:
+Regardless of where a job comes from, JobTrawl converts it into a shared structure with fields such as:
 
 - source key
 - company
@@ -177,7 +179,13 @@ Regardless of where a job comes from, adapters try to normalize it into a common
 - employment type
 - compensation
 
-After normalization, `src/lib/search.js` applies the search filters, counts matches per source, sorts jobs by date, and deduplicates the final list.
+After that, JobTrawl:
+
+- applies your filters
+- counts matches per source
+- removes duplicates
+- sorts results by the newest known date first
+- shows source health information alongside the results
 
 ## Local cache
 
@@ -188,11 +196,11 @@ JobTrawl caches jobs on disk so searches do not always need to refetch every sou
 
 Cache behavior:
 
-- Each source has sync state and last error tracking
-- Stale sources can be refreshed
-- Searches can reuse fresh cached results
-- Generated inventory sources are included by default only after they have been synced locally
-- Expired postings are pruned automatically
+- each source keeps sync state and last-error tracking
+- searches can reuse fresh cached results
+- stale sources can be refreshed
+- generated inventory sources are included by default only after they have been synced locally
+- expired postings are pruned automatically
 
 There are also API endpoints for cache status and manual sync:
 
@@ -261,26 +269,88 @@ Coverage quality varies by provider and by company implementation. API-backed ad
 
 ## Installation
 
-### Requirements
+### Before you start
 
-- `Node.js 20+`
-- `npm`
-- Internet access for fetching job listings from public endpoints and career pages
+- You need an internet connection because JobTrawl fetches live job listings from public job boards and career pages.
+- You need `Node.js 20` or newer installed on your computer.
+- `npm` usually comes with Node.js, so you normally do not need to install it separately.
 
-### Download
+If you are not technical, the easiest way to think about this is:
+
+1. install Node.js
+2. download the JobTrawl folder
+3. open that folder in a terminal
+4. run one install command
+5. run one start command
+6. open the local web address in your browser
+
+### Step 1: Install Node.js
+
+1. Go to [https://nodejs.org](https://nodejs.org)
+2. Download the current `LTS` version for your computer
+3. Run the installer
+4. Accept the default options unless you have a reason to change them
+5. When installation finishes, restart your terminal if one was already open
+
+To check that Node.js installed correctly, open a terminal and run:
+
+```powershell
+node -v
+```
+
+You should see a version number such as `v20.x.x` or newer.
+
+If that works, check npm too:
+
+```powershell
+npm -v
+```
+
+### Step 2: Download JobTrawl
+
+You can download the project in either of these ways.
+
+#### Option A: Download the ZIP file
+
+1. Open the GitHub repository page
+2. Click the green `Code` button
+3. Click `Download ZIP`
+4. Extract the ZIP somewhere easy to find, like your Desktop or Documents folder
+
+#### Option B: Clone with Git
+
+If you already use Git, run:
 
 ```powershell
 git clone https://github.com/ugraphix/JobTrawl.git
 cd JobTrawl
 ```
 
-### Install
+If you downloaded the ZIP instead, open a terminal and move into the extracted folder. Example:
+
+```powershell
+cd "$HOME\\Downloads\\JobTrawl"
+```
+
+### Step 3: Install JobTrawl
+
+Inside the JobTrawl folder, run:
 
 ```powershell
 npm install
 ```
 
-### Run
+If PowerShell blocks `npm`, use:
+
+```powershell
+npm.cmd install
+```
+
+Wait until the install finishes.
+
+### Step 4: Start JobTrawl
+
+Run:
 
 ```powershell
 npm start
@@ -289,11 +359,22 @@ npm start
 If PowerShell blocks `npm`, use:
 
 ```powershell
-npm.cmd install
 npm.cmd start
 ```
 
-Then open [http://localhost:3000](http://localhost:3000).
+When it starts correctly, JobTrawl runs on:
+
+- [http://localhost:3001](http://localhost:3001)
+
+Open that address in your web browser.
+
+### Step 5: If it does not open
+
+- Make sure you are still inside the JobTrawl folder before running commands.
+- Make sure Node.js installed successfully by running `node -v`.
+- If `npm` does not work in PowerShell, use `npm.cmd`.
+- If `http://localhost:3001` does not load, check the terminal window for an error message.
+- If port `3001` is already being used by another app, stop that app or change the `PORT` environment variable before starting JobTrawl.
 
 ### Development mode
 
@@ -301,10 +382,16 @@ Then open [http://localhost:3000](http://localhost:3000).
 npm run dev
 ```
 
+If PowerShell blocks `npm`, use:
+
+```powershell
+npm.cmd run dev
+```
+
 ## Basic usage
 
 1. Start the app with `npm start`
-2. Open `http://localhost:3000`
+2. Open `http://localhost:3001`
 3. Enter a keyword or role title
 4. Choose recency, arrangement, and location filters
 5. Optionally customize the search to specific companies or ATS/API source types
@@ -383,4 +470,4 @@ src/lib/adapters/           ATS and career-page adapters
 
 ## Summary
 
-JobTrawl is essentially a local job-ingestion and filtering engine for direct employer listings. It mixes provider APIs with public career-page scraping, converts everything into one normalized format, caches the results locally, and gives you a single UI to search across both curated and large generated ATS inventories.
+JobTrawl is a local search app for direct employer listings. It combines ATS APIs and public career-page scraping, standardizes the results, caches them locally, and gives you one place to search across both curated sources and larger imported ATS inventories.
