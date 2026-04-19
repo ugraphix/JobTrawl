@@ -92,7 +92,7 @@ function inferDateStatus(postedAt, updatedAt) {
   return "unknown";
 }
 
-export function safeText(value, maxLength = 220) {
+export function safeText(value, maxLength = 700) {
   const collapsed = cleanText(value);
   if (!collapsed) {
     return null;

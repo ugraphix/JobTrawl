@@ -83,8 +83,31 @@ function absoluteWorkdayJobUrl(source, externalPath) {
     return source.careersUrl || null;
   }
 
+  const rawPath = String(externalPath || "").trim();
+  if (!rawPath) {
+    return source.careersUrl || null;
+  }
+
+  if (/invalid-url/i.test(rawPath)) {
+    return source.careersUrl || null;
+  }
+
+  if (/^https?:\/\//i.test(rawPath)) {
+    return rawPath;
+  }
+
+  if (source.careersUrl) {
+    const baseUrl = String(source.careersUrl).replace(/\/+$/, "");
+    const joinedPath = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+    return `${baseUrl}${joinedPath}`;
+  }
+
   const host = source.host || "wd5.myworkdaysite.com";
-  return `https://${host}/recruiting/${source.tenant}/${source.site}${externalPath}`;
+  const siteBase = host.includes("myworkdayjobs.com")
+    ? `https://${host}/${source.site}`
+    : `https://${host}/recruiting/${source.tenant}/${source.site}`;
+  const joinedPath = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+  return `${siteBase}${joinedPath}`;
 }
 
 function extractPostingDate(job) {

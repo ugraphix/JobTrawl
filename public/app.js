@@ -29,11 +29,18 @@ const sourceCustomizationModeInputs = document.querySelectorAll('input[name="sou
 const groupActionButtons = document.querySelectorAll('[data-group-action]');
 const filterDropdownNodes = document.querySelectorAll('.filter-dropdown');
 const SEARCH_REQUEST_TIMEOUT_MS = 120000;
+const SEARCH_PROGRESS_POLL_MS = 900;
+const SEARCH_PROGRESS_STALE_MS = 2800;
 
 let bootstrapData = null;
 let locationGroupCounter = 0;
 let detectedLocation = null;
 let geolocationRequested = false;
+let activeSearchRequestId = "";
+let activeSearchProgressTimer = null;
+let activeSearchStartedAt = 0;
+let activeSearchLastServerProgressAt = 0;
+let activeSearchTimelineTick = 0;
 
 bootstrap();
 form.addEventListener("submit", handleSearch);
@@ -93,10 +100,19 @@ async function bootstrap() {
 
 async function handleSearch(event) {
   event.preventDefault();
+  const searchRequestId = createSearchRequestId();
+  activeSearchRequestId = searchRequestId;
+  activeSearchStartedAt = Date.now();
   setStatus("Searching", true);
-  resultsCountNode.textContent = "Searching configured sources...";
+  updateLoadingUi({
+    stage: "queued",
+    message: "Preparing your search",
+    detail: "JobTrawl is checking your filters and getting the source list ready.",
+    percent: 2,
+  });
+  startSearchProgressPolling(searchRequestId);
+
   resultsNode.className = "results-list";
-  resultsNode.innerHTML = renderLoadingState();
 
   const locationMode = getLocationMode();
 
@@ -105,6 +121,7 @@ async function handleSearch(event) {
   }
 
   if (locationMode === "my_location" && !detectedLocation?.coordinates) {
+    stopSearchProgressPolling();
     setStatus("Location needed");
     resultsCountNode.textContent = "Location permission needed";
     resultsNode.className = "results-list empty-state";
@@ -115,6 +132,7 @@ async function handleSearch(event) {
   const locationGroups = collectEffectiveLocationGroups(locationMode);
 
   const body = buildSearchPayload(locationMode, locationGroups);
+  body.searchRequestId = searchRequestId;
 
   try {
     const response = await fetch("/api/search", {
@@ -125,6 +143,7 @@ async function handleSearch(event) {
     });
 
     const payload = await response.json();
+    stopSearchProgressPolling();
 
     if (!response.ok) {
       setStatus("Error");
@@ -137,6 +156,7 @@ async function handleSearch(event) {
     renderResults(payload, body, locationMode);
     setStatus("Complete");
   } catch (error) {
+    stopSearchProgressPolling();
     setStatus("Timed out");
     resultsCountNode.textContent = "Search timed out";
     resultsNode.className = "results-list empty-state";
@@ -603,6 +623,9 @@ function renderSourceHealth(sources) {
 
 function renderJobCard(job) {
   const dateLine = formatDateLine(job);
+  const arrangementValue = job.workArrangement || "unknown";
+  const arrangementLabel = titleCase(arrangementValue);
+  const descriptionPreview = buildDescriptionPreview(job);
   const distancePill = Number.isFinite(job.distanceMiles)
     ? `<span class="pill">${escapeHtml(`${job.distanceMiles.toFixed(1)} miles away`)}</span>`
     : "";
@@ -617,9 +640,12 @@ function renderJobCard(job) {
           <h3>${escapeHtml(job.title)}</h3>
           <p class="company-line">${escapeHtml(job.company)} · ${escapeHtml(job.provider)}</p>
         </div>
-        <div class="pill-row">
-          <span class="pill">${escapeHtml(job.workArrangement || "unknown")}</span>
-          ${job.employmentType ? `<span class="pill">${escapeHtml(job.employmentType)}</span>` : ""}
+        <div class="job-label-stack">
+          <div class="job-label-heading">Working arrangement</div>
+          <div class="pill-row arrangement-pill-row">
+            <span class="pill">${escapeHtml(arrangementLabel)}</span>
+          </div>
+          ${job.employmentType ? `<div class="job-inline-note">${escapeHtml(job.employmentType)}</div>` : ""}
         </div>
       </div>
       <div class="pill-row">
@@ -631,7 +657,12 @@ function renderJobCard(job) {
       <div class="job-meta">
         <div>${escapeHtml(dateLine)}</div>
         <div>Source key: ${escapeHtml(job.sourceKey)}</div>
-        ${job.descriptionSnippet ? `<div class="job-snippet">${escapeHtml(job.descriptionSnippet)}</div>` : ""}
+        ${descriptionPreview ? `
+          <div class="job-snippet-block">
+            <div class="job-snippet-label">Job description</div>
+            <div class="job-snippet">${escapeHtml(descriptionPreview)}</div>
+          </div>
+        ` : ""}
       </div>
       <div class="job-actions">
         <a href="${escapeAttribute(job.applyUrl)}" target="_blank" rel="noreferrer">Open application</a>
@@ -676,16 +707,139 @@ function buildSummary(payload, filters, locationMode) {
 }
 
 function renderLoadingState() {
+  return renderLoadingStateMarkup({
+    message: "Searching job sources and filtering results",
+    detail: "JobTrawl is checking cache first and then reaching out to employer job boards as needed.",
+    percent: 8,
+  });
+}
+
+function renderLoadingStateMarkup(progress = {}) {
+  const percent = clampProgressPercent(progress.percent);
+  const progressLabel = buildProgressLabel(progress);
+  const loadingStepsMarkup = buildLoadingStepsMarkup(progress);
   return `
     <div class="loading-state">
-      <div>Searching job sources and filtering results</div>
-      ${renderLoadingDots()}
+      <div class="loading-header">
+        <div class="loading-eyebrow">Search in progress</div>
+        <div class="loading-progress-wrap">
+          <div class="loading-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}">
+            <span style="width: ${percent}%"></span>
+          </div>
+          <div class="loading-meta">${escapeHtml(progressLabel)}</div>
+        </div>
+      </div>
+      <div class="loading-title">${escapeHtml(progress.message || "Searching job sources and filtering results")} ${renderLoadingDots()}</div>
+      <div class="loading-detail">${escapeHtml(progress.detail || "JobTrawl is working through the selected sources.")}</div>
+      ${loadingStepsMarkup}
     </div>
   `;
 }
 
 function renderLoadingDots() {
   return '<span class="loading-dots" aria-hidden="true"><span></span><span></span><span></span></span>';
+}
+
+function buildLoadingStepsMarkup(progress = {}) {
+  const steps = getLoadingTimelineSteps(progress);
+  if (steps.length === 0) {
+    return "";
+  }
+
+  return `
+    <div class="loading-steps" aria-label="Search progress steps">
+      ${steps.map((step) => `
+        <div class="loading-step ${step.state}">
+          <div class="loading-step-marker">${step.state === "done" ? "✓" : step.index}</div>
+          <div class="loading-step-copy">
+            <div class="loading-step-title">${escapeHtml(step.title)}</div>
+            <div class="loading-step-detail">${escapeHtml(step.detail)}</div>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function getLoadingTimelineSteps(progress = {}) {
+  const stage = progress.stage || "loading_sources";
+  const steps = stage === "filtering"
+    ? [
+        {
+          key: "cache",
+          title: "Checking cache",
+          detail: "Reusing fast local matches before the app reaches out to live job boards.",
+        },
+        {
+          key: "locations",
+          title: "Searching locations",
+          detail: "Applying your location and filter choices to the jobs that have been found.",
+        },
+        {
+          key: "sources",
+          title: "Loading sources",
+          detail: "Pulling ATS and career-page results into one shared list.",
+        },
+        {
+          key: "sorting",
+          title: "Sorting job titles",
+          detail: "Filtering titles, removing duplicates, and cleaning up the combined match list.",
+        },
+        {
+          key: "descriptions",
+          title: "Grabbing job descriptions",
+          detail: "Keeping the role details that are useful for the result cards.",
+        },
+        {
+          key: "cards",
+          title: "Creating cards",
+          detail: "Organizing the final matches into cards for the results page.",
+        },
+      ]
+    : [
+        {
+          key: "cache",
+          title: "Checking cache",
+          detail: "Looking for fresh cached matches first so faster results can show up sooner.",
+        },
+        {
+          key: "locations",
+          title: "Searching locations",
+          detail: "Getting your selected city, state, distance, and arrangement filters ready.",
+        },
+        {
+          key: "sources",
+          title: "Loading sources",
+          detail: "Starting ATS feeds and employer career pages that match this search.",
+        },
+        {
+          key: "sorting",
+          title: "Sorting job titles",
+          detail: "Lining up title matches while slower boards continue loading in the background.",
+        },
+        {
+          key: "descriptions",
+          title: "Grabbing job descriptions",
+          detail: "Collecting role details like responsibilities, location, and work arrangement where available.",
+        },
+        {
+          key: "cards",
+          title: "Creating cards",
+          detail: "Preparing the final result cards so the page is ready to show them.",
+        },
+      ];
+
+  const currentKey = String(progress.timelineKey || "");
+  let activeIndex = steps.findIndex((step) => step.key === currentKey);
+  if (activeIndex === -1) {
+    activeIndex = Math.max(0, Math.min(steps.length - 1, Number(progress.timelineStep || 1) - 1));
+  }
+
+  return steps.map((step, index) => ({
+    ...step,
+    index: index + 1,
+    state: index < activeIndex ? "done" : index === activeIndex ? "active" : "pending",
+  }));
 }
 
 function formatLocationGroup(group) {
@@ -705,6 +859,308 @@ function setStatus(text, isLoading = false) {
   if (!isLoading) {
     statusPillNode.classList.remove("loading");
   }
+}
+
+function startSearchProgressPolling(searchRequestId) {
+  stopSearchProgressPolling();
+  if (!searchRequestId) {
+    return;
+  }
+
+  activeSearchLastServerProgressAt = 0;
+  activeSearchTimelineTick = 0;
+  pollSearchProgress(searchRequestId);
+  activeSearchProgressTimer = window.setInterval(() => {
+    activeSearchTimelineTick += 1;
+    if (!activeSearchLastServerProgressAt || (Date.now() - activeSearchLastServerProgressAt) > SEARCH_PROGRESS_STALE_MS) {
+      const fallbackProgress = buildFallbackProgress();
+      updateLoadingUi(fallbackProgress);
+    }
+    pollSearchProgress(searchRequestId);
+  }, SEARCH_PROGRESS_POLL_MS);
+}
+
+function stopSearchProgressPolling() {
+  if (activeSearchProgressTimer) {
+    window.clearInterval(activeSearchProgressTimer);
+    activeSearchProgressTimer = null;
+  }
+  activeSearchRequestId = "";
+  activeSearchStartedAt = 0;
+  activeSearchLastServerProgressAt = 0;
+  activeSearchTimelineTick = 0;
+}
+
+async function pollSearchProgress(searchRequestId) {
+  if (!searchRequestId || activeSearchRequestId !== searchRequestId) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/search/status?id=${encodeURIComponent(searchRequestId)}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const payload = await response.json();
+    if (activeSearchRequestId !== searchRequestId) {
+      return;
+    }
+
+    activeSearchLastServerProgressAt = Date.now();
+    updateLoadingUi(payload);
+  } catch {
+    if (!activeSearchLastServerProgressAt || (Date.now() - activeSearchLastServerProgressAt) > SEARCH_PROGRESS_STALE_MS) {
+      const fallbackProgress = buildFallbackProgress();
+      updateLoadingUi(fallbackProgress);
+    }
+  }
+}
+
+function updateLoadingUi(progress = {}) {
+  const displayProgress = enrichLoadingProgress(progress);
+  resultsCountNode.textContent = buildLoadingCountText(displayProgress);
+  resultsNode.innerHTML = renderLoadingStateMarkup(displayProgress);
+  setStatus(buildLoadingStatusText(displayProgress), true);
+}
+
+function buildLoadingCountText(progress = {}) {
+  if (Number.isFinite(progress.totalSources) && progress.totalSources > 0) {
+    const completed = Number(progress.completedSources || 0);
+    return `Searching ${completed} of ${progress.totalSources} sources...`;
+  }
+
+  return "Searching configured sources...";
+}
+
+function buildLoadingStatusText(progress = {}) {
+  switch (progress.stage) {
+    case "loading_sources":
+      return "Checking sources";
+    case "filtering":
+      return "Finishing up";
+    case "completed":
+      return "Complete";
+    case "error":
+      return "Error";
+    default:
+      return "Searching";
+  }
+}
+
+function buildProgressLabel(progress = {}) {
+  const completed = Number(progress.completedSources || 0);
+  const total = Number(progress.totalSources || 0);
+  const cached = Number(progress.cachedSources || 0);
+  const live = Number(progress.liveSources || 0);
+  const fallback = Number(progress.fallbackSources || 0);
+  const elapsedSeconds = activeSearchStartedAt ? Math.max(1, Math.round((Date.now() - activeSearchStartedAt) / 1000)) : 0;
+
+  if (total > 0) {
+    const parts = [`${completed} of ${total} sources checked`];
+    if (cached > 0) {
+      parts.push(`${cached} cache`);
+    }
+    if (live > 0) {
+      parts.push(`${live} live`);
+    }
+    if (fallback > 0) {
+      parts.push(`${fallback} fallback`);
+    }
+    if (progress.failedSources > 0) {
+      parts.push(`${progress.failedSources} slow or failed`);
+    }
+    parts.push(`${elapsedSeconds}s elapsed`);
+    return parts.join(" • ");
+  }
+
+  return elapsedSeconds > 0 ? `${elapsedSeconds}s elapsed` : "Preparing search";
+}
+
+function buildFallbackProgress() {
+  const elapsedMs = activeSearchStartedAt ? Date.now() - activeSearchStartedAt : 0;
+  const elapsedSeconds = activeSearchStartedAt ? Math.max(1, Math.round(elapsedMs / 1000)) : 0;
+
+  if (elapsedMs > 90000) {
+    return {
+      stage: "filtering",
+      message: "Finishing the last cleanup steps",
+      detail: "Most source checks are done. JobTrawl is filtering, deduplicating, and sorting the final results now.",
+      percent: 97,
+      elapsedSeconds,
+    };
+  }
+  if (elapsedMs > 75000) {
+    return {
+      stage: "filtering",
+      message: "Almost there",
+      detail: "The slower employer boards are wrapping up, and the final cleanup pass is close behind.",
+      percent: 94,
+      elapsedSeconds,
+    };
+  }
+  if (elapsedMs > 50000) {
+    return {
+      stage: "loading_sources",
+      message: "Still waiting on the slowest job boards",
+      detail: "Most sources should already be done. A smaller group of slower ATS or career pages is still finishing.",
+      percent: 86,
+      elapsedSeconds,
+    };
+  }
+  if (elapsedMs > 35000) {
+    return {
+      stage: "loading_sources",
+      message: "Checking live ATS feeds and career pages",
+      detail: "Some employer boards respond quickly, and others take longer. JobTrawl is still working through the slower ones.",
+      percent: 74,
+      elapsedSeconds,
+    };
+  }
+  if (elapsedMs > 15000) {
+    return {
+      stage: "loading_sources",
+      message: "Mixing cached matches with fresh source checks",
+      detail: "JobTrawl is pulling quick results from cache first and then filling in fresher data from live job boards.",
+      percent: 58,
+      elapsedSeconds,
+    };
+  }
+  return {
+    stage: "loading_sources",
+    message: "Checking cache and loading sources",
+    detail: "JobTrawl is building the source list, checking cache, and starting the first live board requests now.",
+    percent: 42,
+    elapsedSeconds,
+  };
+}
+
+function enrichLoadingProgress(progress = {}) {
+  const elapsedMs = activeSearchStartedAt ? Date.now() - activeSearchStartedAt : 0;
+  const timelinePhase = buildTimelineLoadingPhase(elapsedMs, progress, activeSearchTimelineTick);
+  const completed = Number(progress.completedSources || 0);
+  const total = Number(progress.totalSources || 0);
+  const hasRealSourceProgress = total > 0 && completed > 0;
+  const incomingPercent = Number(progress.percent);
+  const timelinePercent = Number(timelinePhase.percent || 0);
+
+  return {
+    ...progress,
+    message: timelinePhase.totalSteps
+      ? `Step ${timelinePhase.step} of ${timelinePhase.totalSteps}: ${timelinePhase.message || progress.message || "Searching"}`
+      : (timelinePhase.message || progress.message),
+    detail: timelinePhase.detail || progress.detail,
+    percent: Number.isFinite(incomingPercent)
+      ? Math.max(incomingPercent, timelinePercent)
+      : timelinePercent,
+    timelineStep: timelinePhase.step,
+    timelineTotalSteps: timelinePhase.totalSteps,
+    timelineKey: timelinePhase.key,
+    sourceProgressKnown: hasRealSourceProgress,
+  };
+}
+
+function buildTimelineLoadingPhase(elapsedMs = 0, progress = {}, timelineTick = 0) {
+  const stage = progress.stage || "loading_sources";
+  const phases = stage === "filtering"
+    ? [
+        {
+          key: "filtering",
+          message: "Filtering and matching job titles",
+          detail: "JobTrawl is applying your keyword, date, and work-arrangement filters to the combined job list.",
+          minElapsedMs: 0,
+          percent: 93,
+        },
+        {
+          key: "sorting",
+          message: "Sorting job titles and removing duplicates",
+          detail: "The combined results are being cleaned up so repeated listings and stale duplicates don't crowd the page.",
+          minElapsedMs: 1400,
+          percent: 96,
+        },
+        {
+          key: "cards",
+          message: "Creating result cards",
+          detail: "The final matches are being organized into cards so they're ready to show in the results list.",
+          minElapsedMs: 2800,
+          percent: 98,
+        },
+      ]
+    : [
+        {
+          key: "cache",
+          message: "Checking cache",
+          detail: "JobTrawl is checking local cache first so it can reuse fast matches before it reaches out to live job boards.",
+          minElapsedMs: 0,
+          percent: 16,
+        },
+        {
+          key: "locations",
+          message: "Searching locations",
+          detail: "Your keyword, location, and work-arrangement choices are being prepared for the source adapters.",
+          minElapsedMs: 1200,
+          percent: 24,
+        },
+        {
+          key: "sources",
+          message: "Loading sources",
+          detail: "JobTrawl is loading the selected ATS feeds and employer career pages that match this search.",
+          minElapsedMs: 2400,
+          percent: 34,
+        },
+        {
+          key: "sorting",
+          message: "Sorting job titles",
+          detail: "The search is lining up title matches while slower employer boards keep loading in the background.",
+          minElapsedMs: 4200,
+          percent: 48,
+        },
+        {
+          key: "descriptions",
+          message: "Grabbing job descriptions",
+          detail: "JobTrawl is pulling title, location, arrangement, and description details from the job boards that have responded.",
+          minElapsedMs: 6000,
+          percent: 61,
+        },
+        {
+          key: "cards",
+          message: "Creating cards",
+          detail: "The final matches are being organized into result cards while the remaining cleanup finishes.",
+          minElapsedMs: 7800,
+          percent: 74,
+        },
+      ];
+
+  const steppedIndex = Math.min(phases.length - 1, Math.max(0, Math.floor(Number(timelineTick || 0) / 2)));
+  const elapsedIndex = phases.reduce((currentIndex, phase, index) => (
+    elapsedMs >= phase.minElapsedMs ? index : currentIndex
+  ), 0);
+  const selectedPhase = phases[Math.max(steppedIndex, elapsedIndex)] || phases[0];
+
+  return {
+    ...selectedPhase,
+    step: phases.indexOf(selectedPhase) + 1,
+    totalSteps: phases.length,
+  };
+}
+
+function clampProgressPercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function createSearchRequestId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `search-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function renderCheckboxGroup(node, items, mapItem) {
@@ -747,6 +1203,157 @@ function formatDateLine(job) {
 
 function titleCase(value) {
   return String(value).charAt(0).toUpperCase() + String(value).slice(1);
+}
+
+function buildDescriptionPreview(job) {
+  const roleSearchText = extractRoleDescription(job.searchText);
+  if (!roleSearchText) {
+    const roleSnippet = extractRoleDescription(job.descriptionSnippet);
+    if (!roleSnippet) {
+      return "";
+    }
+    return trimPreview(roleSnippet, 900);
+  }
+
+  const title = normalizePreviewText(job.title);
+  let preview = roleSearchText;
+  if (title && preview.toLowerCase().startsWith(title.toLowerCase())) {
+    preview = preview.slice(title.length).trim();
+  }
+
+  return trimPreview(preview, 900);
+}
+
+function normalizePreviewText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function extractRoleDescription(value) {
+  const text = normalizePreviewText(value);
+  if (!text) {
+    return "";
+  }
+
+  const preferredHeadings = [
+    "about the role",
+    "about this role",
+    "role overview",
+    "position overview",
+    "job summary",
+    "position summary",
+    "the role",
+    "the opportunity",
+    "what you'll do",
+    "what you will do",
+    "what you'll be doing",
+    "what you get to do",
+    "what you'll work on",
+    "day to day",
+    "responsibilities",
+    "key responsibilities",
+  ];
+  const stopHeadings = [
+    "about the company",
+    "about us",
+    "who we are",
+    "what we do",
+    "our mission",
+    "company overview",
+    "why join",
+    "benefits",
+    "compensation",
+    "pay range",
+    "salary range",
+    "qualifications",
+    "what you'll bring",
+    "requirements",
+    "equal opportunity",
+    "eeo",
+    "privacy",
+    "accommodation",
+  ];
+
+  const lowerText = text.toLowerCase();
+  let startIndex = -1;
+  let selectedHeading = "";
+  for (const heading of preferredHeadings) {
+    const index = lowerText.indexOf(heading);
+    if (index !== -1 && (startIndex === -1 || index < startIndex)) {
+      startIndex = index;
+      selectedHeading = heading;
+    }
+  }
+
+  let candidate = text;
+  if (startIndex !== -1) {
+    candidate = text.slice(startIndex + selectedHeading.length).replace(/^[:\s.-]+/, "").trim();
+  }
+
+  if (startIndex === -1 && looksLikeCompanyBoilerplate(text)) {
+    return "";
+  }
+
+  const lowerCandidate = candidate.toLowerCase();
+  let stopIndex = -1;
+  for (const heading of stopHeadings) {
+    const index = lowerCandidate.indexOf(heading);
+    if (index > 80 && (stopIndex === -1 || index < stopIndex)) {
+      stopIndex = index;
+    }
+  }
+
+  if (stopIndex !== -1) {
+    candidate = candidate.slice(0, stopIndex).trim();
+  }
+
+  return candidate || text;
+}
+
+function looksLikeCompanyBoilerplate(text) {
+  const normalized = normalizePreviewText(text).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const boilerplateStarts = [
+    "who we are",
+    "about us",
+    "about the company",
+    "what we do",
+    "our mission",
+    "company overview",
+  ];
+  const roleSignals = [
+    "about the role",
+    "about this role",
+    "what you'll do",
+    "what you will do",
+    "responsibilities",
+    "job summary",
+    "position summary",
+    "the role",
+    "the opportunity",
+  ];
+
+  const startsWithBoilerplate = boilerplateStarts.some((prefix) => normalized.startsWith(prefix));
+  if (!startsWithBoilerplate) {
+    return false;
+  }
+
+  return !roleSignals.some((signal) => normalized.includes(signal));
+}
+
+function trimPreview(value, maxLength = 900) {
+  const text = normalizePreviewText(value);
+  if (!text) {
+    return "";
+  }
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength).trimEnd()}...`;
 }
 
 function formatCompanyLabel(value) {

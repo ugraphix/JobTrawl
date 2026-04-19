@@ -201,10 +201,15 @@ export async function loadSourceResultsForSearch(sources, filters = {}, options 
   pruneExpiredCache();
 
   const allowSync = Boolean(options.allowSync);
+  const onSourceComplete = typeof options.onSourceComplete === "function" ? options.onSourceComplete : null;
   const results = new Array(sources.length);
 
   await runWithConcurrency(sources, DEFAULT_SEARCH_CONCURRENCY, async (source, index) => {
-    results[index] = await loadSingleSourceResult(source, filters, allowSync);
+    const result = await loadSingleSourceResult(source, filters, allowSync);
+    results[index] = result;
+    if (onSourceComplete) {
+      onSourceComplete({ source, index, result });
+    }
   });
 
   return results;
@@ -216,14 +221,38 @@ async function loadSingleSourceResult(source, filters, allowSync) {
   const requiresBatchCaching = isGeneratedInventorySource(source);
 
   if (hasFreshCache && existingJobs.length > 0) {
-    return { source, jobs: existingJobs, error: null };
+    return {
+      source,
+      jobs: existingJobs,
+      error: null,
+      progressMeta: {
+        mode: "fresh_cache",
+        jobs: existingJobs.length,
+      },
+    };
   }
 
   if (!allowSync) {
     if (existingJobs.length > 0) {
-      return { source, jobs: existingJobs, error: null };
+      return {
+        source,
+        jobs: existingJobs,
+        error: null,
+        progressMeta: {
+          mode: "cache_only",
+          jobs: existingJobs.length,
+        },
+      };
     }
-    return { source, jobs: [], error: null };
+    return {
+      source,
+      jobs: [],
+      error: null,
+      progressMeta: {
+        mode: "empty_cache",
+        jobs: 0,
+      },
+    };
   }
 
   if (requiresBatchCaching) {
@@ -231,23 +260,48 @@ async function loadSingleSourceResult(source, filters, allowSync) {
       source,
       jobs: existingJobs,
       error: null,
+      progressMeta: {
+        mode: "generated_cache",
+        jobs: existingJobs.length,
+      },
     };
   }
 
   try {
     await syncSourceToCache(source, filters, { timeoutMs: DEFAULT_SOURCE_SEARCH_TIMEOUT_MS });
-    return { source, jobs: safeReadCachedJobsForSource(source.key), error: null };
+    const syncedJobs = safeReadCachedJobsForSource(source.key);
+    return {
+      source,
+      jobs: syncedJobs,
+      error: null,
+      progressMeta: {
+        mode: "live_sync",
+        jobs: syncedJobs.length,
+      },
+    };
   } catch (error) {
     const fallbackJobs = safeReadCachedJobsForSource(source.key);
     if (fallbackJobs.length === 0) {
       try {
         const liveJobs = await fetchJobsForSourceWithTimeout(source, filters, DEFAULT_SOURCE_SEARCH_TIMEOUT_MS);
-        return { source, jobs: liveJobs, error: null };
+        return {
+          source,
+          jobs: liveJobs,
+          error: null,
+          progressMeta: {
+            mode: "live_direct",
+            jobs: liveJobs.length,
+          },
+        };
       } catch (liveError) {
         return {
           source,
           jobs: [],
           error: liveError?.message || error?.message || String(liveError || error),
+          progressMeta: {
+            mode: "failed",
+            jobs: 0,
+          },
         };
       }
     }
@@ -255,6 +309,10 @@ async function loadSingleSourceResult(source, filters, allowSync) {
       source,
       jobs: fallbackJobs,
       error: fallbackJobs.length > 0 ? null : (error?.message || String(error)),
+      progressMeta: {
+        mode: "stale_cache_fallback",
+        jobs: fallbackJobs.length,
+      },
     };
   }
 }

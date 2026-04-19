@@ -19,6 +19,8 @@ const publicDir = path.join(process.cwd(), "public");
 const dataDir = path.join(process.cwd(), "data");
 const serverLogPath = path.join(dataDir, "server.log");
 const port = process.env.PORT || 3001;
+const SEARCH_STATUS_TTL_MS = 2 * 60 * 1000;
+const activeSearches = new Map();
 const DEFAULT_COMPANIES = [
   "Amazon",
   "Microsoft",
@@ -130,6 +132,26 @@ const server = createServer(async (request, response) => {
       });
     }
 
+    if (request.method === "GET" && request.url?.startsWith("/api/search/status")) {
+      const requestUrl = new URL(request.url, `http://127.0.0.1:${port}`);
+      const searchRequestId = String(requestUrl.searchParams.get("id") || "").trim();
+      const status = searchRequestId ? activeSearches.get(searchRequestId) : null;
+
+      if (!status) {
+        return sendJson(response, 404, { error: "Search status not found" }, {
+          method: request.method,
+          url: request.url,
+          startedAt,
+        });
+      }
+
+      return sendJson(response, 200, status, {
+        method: request.method,
+        url: request.url,
+        startedAt,
+      });
+    }
+
     if (request.method === "POST" && request.url === "/api/cache/sync") {
       const body = await readJson(request);
       const allSources = await loadSourceConfig();
@@ -163,12 +185,128 @@ const server = createServer(async (request, response) => {
       const allSources = await loadSourceConfig();
       const sources = filterSources(allSources, body);
       const filters = buildSearchFilters(body);
-      const sourceResultsOverride = await loadSourceResultsForSearch(sources, filters, { allowSync: true });
+      const searchRequestId = typeof body.searchRequestId === "string" && body.searchRequestId.trim()
+        ? body.searchRequestId.trim()
+        : "";
+
+      if (searchRequestId) {
+        beginTrackedSearch(searchRequestId, sources.length);
+        updateTrackedSearch(searchRequestId, {
+          stage: "loading_sources",
+          message: sources.length > 0
+            ? `Checking cache and loading ${sources.length} sources`
+            : "Checking cache and loading sources",
+          detail: sources.length > 0
+            ? "This can take a bit if several employer job boards are slow to respond."
+            : "Preparing your search.",
+          totalSources: sources.length,
+        });
+      }
+
+      let completedSources = 0;
+      let failedSources = 0;
+      let cachedSources = 0;
+      let liveSources = 0;
+      let fallbackSources = 0;
+      const sourceResultsOverride = await loadSourceResultsForSearch(sources, filters, {
+        allowSync: true,
+        onSourceComplete: ({ result }) => {
+          completedSources += 1;
+          if (result?.error) {
+            failedSources += 1;
+          }
+
+          const progressMode = String(result?.progressMeta?.mode || "");
+          if (["fresh_cache", "cache_only", "generated_cache"].includes(progressMode)) {
+            cachedSources += 1;
+          } else if (["live_sync", "live_direct"].includes(progressMode)) {
+            liveSources += 1;
+          } else if (progressMode === "stale_cache_fallback") {
+            fallbackSources += 1;
+          }
+
+          if (!searchRequestId) {
+            return;
+          }
+
+          const rawProgress = sources.length > 0 ? completedSources / sources.length : 0;
+          const visibleProgress = sources.length > 0
+            ? 18 + Math.round(Math.sqrt(Math.max(0, rawProgress)) * 74)
+            : 32;
+          const percent = Math.min(92, visibleProgress);
+          const remainingSources = Math.max(0, sources.length - completedSources);
+          const earlyPhase = completedSources <= Math.max(5, Math.floor(sources.length * 0.12));
+          const nearingFinish = completedSources >= Math.max(6, Math.floor(sources.length * 0.82));
+          const detail = failedSources > 0
+            ? `${failedSources} source${failedSources === 1 ? "" : "s"} failed or timed out, but the search will keep going.`
+            : nearingFinish
+              ? `Most sources are done. ${remainingSources > 0 ? `${remainingSources} still running in the background.` : "Wrapping up the source checks now."}`
+              : liveSources > cachedSources
+                ? "More live employer boards are being queried now, so this phase can take a little longer."
+                : earlyPhase
+                  ? "JobTrawl is checking cache first, then reaching out to employer job boards when fresh data is needed."
+                  : "JobTrawl is mixing cached matches with live ATS and career-page checks behind the scenes.";
+          const message = completedSources >= sources.length
+            ? "Wrapping up the last source checks"
+            : earlyPhase
+              ? "Checking cache and starting source checks"
+              : nearingFinish
+                ? `Almost done loading sources (${remainingSources} left)`
+                : liveSources > cachedSources
+                  ? `Querying live ATS feeds and career pages (${completedSources}/${sources.length})`
+                  : `Loading results from cache and live boards (${completedSources}/${sources.length})`;
+          updateTrackedSearch(searchRequestId, {
+            stage: "loading_sources",
+            message,
+            detail,
+            completedSources,
+            failedSources,
+            cachedSources,
+            liveSources,
+            fallbackSources,
+            percent,
+          });
+        },
+      });
+
+      if (searchRequestId) {
+        updateTrackedSearch(searchRequestId, {
+          stage: "filtering",
+          message: "Filtering, deduplicating, and sorting matches",
+          detail: "Almost there. JobTrawl is cleaning up the combined results before showing them.",
+          completedSources,
+          failedSources,
+          cachedSources,
+          liveSources,
+          fallbackSources,
+          percent: 96,
+        });
+      }
+
       const result = await searchJobs({
         sources,
         filters,
         sourceResultsOverride,
       });
+
+      if (searchRequestId) {
+        completeTrackedSearch(searchRequestId, {
+          message: result.jobs.length > 0
+            ? `Found ${result.jobs.length} matching job${result.jobs.length === 1 ? "" : "s"}`
+            : "Search finished",
+          detail: result.jobs.length > 0
+            ? "Your results are ready."
+            : "No jobs matched the current filters, but the search completed successfully.",
+          completedSources,
+          failedSources: result.meta.failedSources,
+          cachedSources,
+          liveSources,
+          fallbackSources,
+          totalSources: sources.length,
+          percent: 100,
+        });
+      }
+
       return sendJson(response, 200, result, {
         method: request.method,
         url: request.url,
@@ -178,6 +316,7 @@ const server = createServer(async (request, response) => {
           selectedSources: sources.length,
           jobs: result.jobs.length,
           failedSources: result.meta.failedSources,
+          searchRequestId,
         },
       });
     }
@@ -192,6 +331,7 @@ const server = createServer(async (request, response) => {
       startedAt,
     });
   } catch (error) {
+    tryMarkSearchFailed(request, error);
     sendJson(response, 500, { error: error.message || "Unexpected error" }, {
       method: request.method,
       url: request.url,
@@ -207,6 +347,85 @@ server.listen(port, () => {
 });
 
 initCacheDb();
+
+function beginTrackedSearch(searchRequestId, totalSources = 0) {
+  activeSearches.set(searchRequestId, {
+    id: searchRequestId,
+    stage: "queued",
+    message: "Preparing your search",
+    detail: "JobTrawl is setting up the source list.",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    totalSources,
+    completedSources: 0,
+    failedSources: 0,
+    percent: 2,
+  });
+}
+
+function updateTrackedSearch(searchRequestId, updates) {
+  const existing = activeSearches.get(searchRequestId);
+  if (!existing) {
+    return;
+  }
+
+  activeSearches.set(searchRequestId, {
+    ...existing,
+    ...updates,
+  });
+}
+
+function completeTrackedSearch(searchRequestId, updates = {}) {
+  const existing = activeSearches.get(searchRequestId);
+  if (!existing) {
+    return;
+  }
+
+  activeSearches.set(searchRequestId, {
+    ...existing,
+    ...updates,
+    stage: "completed",
+    finishedAt: new Date().toISOString(),
+    percent: 100,
+  });
+  scheduleTrackedSearchCleanup(searchRequestId);
+}
+
+function failTrackedSearch(searchRequestId, error) {
+  const existing = activeSearches.get(searchRequestId);
+  if (!existing) {
+    return;
+  }
+
+  activeSearches.set(searchRequestId, {
+    ...existing,
+    stage: "error",
+    message: "Search failed",
+    detail: error?.message || String(error),
+    finishedAt: new Date().toISOString(),
+    percent: existing.percent || 0,
+  });
+  scheduleTrackedSearchCleanup(searchRequestId);
+}
+
+function scheduleTrackedSearchCleanup(searchRequestId) {
+  setTimeout(() => {
+    activeSearches.delete(searchRequestId);
+  }, SEARCH_STATUS_TTL_MS).unref?.();
+}
+
+function tryMarkSearchFailed(request, error) {
+  if (!request || request.method !== "POST" || request.url !== "/api/search") {
+    return;
+  }
+
+  const searchRequestId = request.searchRequestIdForTracking;
+  if (!searchRequestId) {
+    return;
+  }
+
+  failTrackedSearch(searchRequestId, error);
+}
 
 function filterSources(sources, sourceKeys) {
   const selectionMode = sourceKeys?.sourceSelectionMode || "all";
@@ -360,7 +579,11 @@ async function readJson(request) {
     return {};
   }
 
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (request?.url === "/api/search" && request?.method === "POST") {
+    request.searchRequestIdForTracking = typeof parsed?.searchRequestId === "string" ? parsed.searchRequestId.trim() : "";
+  }
+  return parsed;
 }
 
 async function serveStaticFile(requestUrl, response) {
