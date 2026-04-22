@@ -1,4 +1,14 @@
-import { buildNormalizedJob, fetchJson, safeText } from "./shared.js";
+import {
+  buildNormalizedJob,
+  cleanText,
+  fetchJson,
+  fetchWorkdayDescriptionFallback,
+  mapWithConcurrency,
+  safeText,
+} from "./shared.js";
+
+const WORKDAY_DETAIL_CONCURRENCY = 3;
+const WORKDAY_DETAIL_MAX_JOBS = 60;
 
 export async function fetchWorkdayJobs(source, filters = {}) {
   const tenant = source.tenant;
@@ -44,6 +54,15 @@ export async function fetchWorkdayJobs(source, filters = {}) {
     }
   }
 
+  const keyword = String(filters.keyword || "").trim();
+  const shouldFetchDetails = source.fetchWorkdayDetails !== false
+    && jobs.length > 0
+    && (Boolean(keyword) || jobs.length <= WORKDAY_DETAIL_MAX_JOBS);
+
+  if (shouldFetchDetails) {
+    await enrichWorkdayDescriptions(jobs);
+  }
+
   return jobs;
 }
 
@@ -69,12 +88,25 @@ function normalizeWorkdayJob(source, job, index) {
     locationLabel: job.locationsText || "Unspecified",
     postedAt: postingDate,
     applyUrl,
-    descriptionSnippet: safeText([
-      job.timeLeftToApply,
-      job.jobPostingEndDateAsText,
-      ...(Array.isArray(job.bulletFields) ? job.bulletFields : []),
-    ].filter(Boolean).join(" • "), 240),
+    descriptionSnippet: null,
+    searchText: null,
     rawLocationText: job.locationsText || null,
+  });
+}
+
+async function enrichWorkdayDescriptions(jobs) {
+  await mapWithConcurrency(jobs, WORKDAY_DETAIL_CONCURRENCY, async (job) => {
+    if (!job?.applyUrl) {
+      return job;
+    }
+
+    const fallback = await fetchWorkdayDescriptionFallback(job.applyUrl);
+    if (fallback.descriptionSnippet || fallback.searchText) {
+      job.descriptionSnippet = fallback.descriptionSnippet || safeText(cleanText(fallback.searchText), 2200) || null;
+      job.searchText = fallback.searchText || fallback.descriptionSnippet || null;
+    }
+
+    return job;
   });
 }
 
@@ -122,11 +154,18 @@ function extractPostingDate(job) {
   }
 
   if (typeof job.postedOn === "string") {
-    if (/posted today/i.test(job.postedOn)) {
+    const postedOnText = job.postedOn.trim();
+    if (/posted today/i.test(postedOnText)) {
       return new Date().toISOString().slice(0, 10);
     }
 
-    const daysMatch = job.postedOn.match(/posted\s+(\d+)\s+days?\s+ago/i);
+    if (/posted yesterday/i.test(postedOnText)) {
+      const date = new Date();
+      date.setDate(date.getDate() - 1);
+      return date.toISOString().slice(0, 10);
+    }
+
+    const daysMatch = postedOnText.match(/posted\s+(\d+)(?:\+)?\s+days?\s+ago/i);
     if (daysMatch?.[1]) {
       const date = new Date();
       date.setDate(date.getDate() - Number(daysMatch[1]));

@@ -7,10 +7,14 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "import:generated-ats": "node scripts/import-generated-ats-ats.js",
+    "import:generated-ats": "node scripts/import-generated-ats.js",
     "sync:generated-ats": "node scripts/sync-generated-ats.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "pdf-parse": "^2.4.5"
   }
 }

@@ -11,7 +11,7 @@ main().catch((error) => {
 async function main() {
   initCacheDb();
   const allSources = await loadSourceConfig();
-  const generatedSources = allSources.filter((source) => source.generatedInventory || source.inventorySource === "generated-ats");
+  const generatedSources = allSources.filter((source) => source.generatedInventory || source.inventorySource === "generated_ats");
 
   let filtered = generatedSources;
 

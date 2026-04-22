@@ -1255,6 +1255,611 @@
       "collectionKey": "seattle-healthcare",
       "collectionLabel": "Seattle healthcare employers",
       "collectionDescription": "Seattle-area healthcare and public-health employer career pages and job boards, including sources with stronger coverage and sources"
+    },
+    {
+      "key": "a7-theapplicantmanager",
+      "company": "a7",
+      "provider": "theapplicantmanager",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "theapplicantmanager",
+      "careersUrl": "https://theapplicantmanager.com/careers?co=a7"
+    },
+    {
+      "key": "a9-theapplicantmanager",
+      "company": "a9",
+      "provider": "theapplicantmanager",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "theapplicantmanager",
+      "careersUrl": "https://theapplicantmanager.com/careers?co=a9"
+    },
+    {
+      "key": "ab-theapplicantmanager",
+      "company": "ab",
+      "provider": "theapplicantmanager",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "theapplicantmanager",
+      "careersUrl": "https://theapplicantmanager.com/careers?co=ab"
+    },
+    {
+      "key": "af-theapplicantmanager",
+      "company": "af",
+      "provider": "theapplicantmanager",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "theapplicantmanager",
+      "careersUrl": "https://theapplicantmanager.com/careers?co=af"
+    },
+    {
+      "key": "ag-theapplicantmanager",
+      "company": "ag",
+      "provider": "theapplicantmanager",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "theapplicantmanager",
+      "careersUrl": "https://theapplicantmanager.com/careers?co=ag"
+    },
+    {
+      "key": "11bitstudios-recruitee",
+      "company": "11bitstudios",
+      "provider": "recruitee",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "recruitee",
+      "careersUrl": "https://11bitstudios.recruitee.com"
+    },
+    {
+      "key": "1x-recruitee",
+      "company": "1x",
+      "provider": "recruitee",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "recruitee",
+      "careersUrl": "https://1x.recruitee.com"
+    },
+    {
+      "key": "5280highschool-recruitee",
+      "company": "5280highschool",
+      "provider": "recruitee",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "recruitee",
+      "careersUrl": "https://5280highschool.recruitee.com"
+    },
+    {
+      "key": "60secondstonapoli-recruitee",
+      "company": "60secondstonapoli",
+      "provider": "recruitee",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "recruitee",
+      "careersUrl": "https://60secondstonapoli.recruitee.com"
+    },
+    {
+      "key": "8advisory-recruitee",
+      "company": "8advisory",
+      "provider": "recruitee",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "recruitee",
+      "careersUrl": "https://8advisory.recruitee.com"
+    },
+    {
+      "key": "aa020-taleo",
+      "company": "aa020",
+      "provider": "taleo",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "taleo",
+      "careersUrl": "https://aa020.taleo.net/careersection/cuhkmc/jobsearch.ftl"
+    },
+    {
+      "key": "aa067-taleo",
+      "company": "aa067",
+      "provider": "taleo",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "taleo",
+      "careersUrl": "https://aa067.taleo.net/careersection/ex/jobsearch.ftl"
+    },
+    {
+      "key": "aa080-taleo",
+      "company": "aa080",
+      "provider": "taleo",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "taleo",
+      "careersUrl": "https://aa080.taleo.net/careersection/sdp_external_career_section/jobsearch.ftl"
+    },
+    {
+      "key": "aa083-taleo",
+      "company": "aa083",
+      "provider": "taleo",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "taleo",
+      "careersUrl": "https://aa083.taleo.net/careersection/ex/jobsearch.ftl"
+    },
+    {
+      "key": "aa115-taleo",
+      "company": "aa115",
+      "provider": "taleo",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "taleo",
+      "careersUrl": "https://aa115.taleo.net/careersection/QA_FD_EXTERNAL_CS/jobsearch.ftl"
+    },
+    {
+      "key": "20four7va-breezy",
+      "company": "20four7va",
+      "provider": "breezy",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "breezyHR",
+      "careersUrl": "https://20four7va.breezy.hr/"
+    },
+    {
+      "key": "75f-breezy",
+      "company": "75f",
+      "provider": "breezy",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "breezyHR",
+      "careersUrl": "https://75f.breezy.hr/"
+    },
+    {
+      "key": "75f-apac-breezy",
+      "company": "75f apac",
+      "provider": "breezy",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "breezyHR",
+      "careersUrl": "https://75f-apac.breezy.hr/"
+    },
+    {
+      "key": "99-group-breezy",
+      "company": "99 group",
+      "provider": "breezy",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "breezyHR",
+      "careersUrl": "https://99-group.breezy.hr/"
+    },
+    {
+      "key": "aarki-breezy",
+      "company": "aarki",
+      "provider": "breezy",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "breezyHR",
+      "careersUrl": "https://aarki.breezy.hr/"
+    },
+    {
+      "key": "3motionai-applicantai",
+      "company": "3motionai",
+      "provider": "applicantai",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "applicantAI",
+      "careersUrl": "https://applicantai.com/3motionai"
+    },
+    {
+      "key": "a-i-sales-clones-applicantai",
+      "company": "a i sales clones",
+      "provider": "applicantai",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "applicantAI",
+      "careersUrl": "https://applicantai.com/a-i-sales-clones"
+    },
+    {
+      "key": "ackee-applicantai",
+      "company": "ackee",
+      "provider": "applicantai",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "applicantAI",
+      "careersUrl": "https://applicantai.com/ackee"
+    },
+    {
+      "key": "affine-io-applicantai",
+      "company": "affine io",
+      "provider": "applicantai",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "applicantAI",
+      "careersUrl": "https://applicantai.com/affine-io"
+    },
+    {
+      "key": "ai20x-applicantai",
+      "company": "ai20x",
+      "provider": "applicantai",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "applicantAI",
+      "careersUrl": "https://applicantai.com/ai20x"
+    },
+    {
+      "key": "2512443950-careerplug",
+      "company": "2512443950",
+      "provider": "careerplug",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerplug",
+      "careersUrl": "https://2512443950.careerplug.com/jobs"
+    },
+    {
+      "key": "360clean-careers-careerplug",
+      "company": "360clean careers",
+      "provider": "careerplug",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerplug",
+      "careersUrl": "https://360clean-careers.careerplug.com/jobs"
+    },
+    {
+      "key": "acehandymanservicescareers-careerplug",
+      "company": "acehandymanservicescareers",
+      "provider": "careerplug",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerplug",
+      "careersUrl": "https://acehandymanservicescareers.careerplug.com/jobs"
+    },
+    {
+      "key": "annettes-corral-llc-dba-golden-corral-careerplug",
+      "company": "annettes corral llc dba golden corral",
+      "provider": "careerplug",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerplug",
+      "careersUrl": "https://annettes-corral-llc-dba-golden-corral.careerplug.com/jobs"
+    },
+    {
+      "key": "bearsfit-careerplug",
+      "company": "bearsfit",
+      "provider": "careerplug",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerplug",
+      "careersUrl": "https://bearsfit.careerplug.com/jobs"
+    },
+    {
+      "key": "acme-careerpuck",
+      "company": "acme",
+      "provider": "careerpuck",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerpuck",
+      "careersUrl": "https://app.careerpuck.com/job-board/acme"
+    },
+    {
+      "key": "armani-brazil-careerpuck",
+      "company": "armani brazil",
+      "provider": "careerpuck",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerpuck",
+      "careersUrl": "https://app.careerpuck.com/job-board/armani-brazil"
+    },
+    {
+      "key": "armani-canada-careerpuck",
+      "company": "armani canada",
+      "provider": "careerpuck",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerpuck",
+      "careersUrl": "https://app.careerpuck.com/job-board/armani-canada"
+    },
+    {
+      "key": "armani-mexico-careerpuck",
+      "company": "armani mexico",
+      "provider": "careerpuck",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerpuck",
+      "careersUrl": "https://app.careerpuck.com/job-board/armani-mexico"
+    },
+    {
+      "key": "armani-retail-careerpuck",
+      "company": "armani retail",
+      "provider": "careerpuck",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "careerpuck",
+      "careersUrl": "https://app.careerpuck.com/job-board/armani-retail"
+    },
+    {
+      "key": "assist-services-fountain",
+      "company": "assist services",
+      "provider": "fountain",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "fountain",
+      "careersUrl": "https://web.fountain.com/c/assist-services/assist-services/US"
+    },
+    {
+      "key": "belay-fountain",
+      "company": "belay",
+      "provider": "fountain",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "fountain",
+      "careersUrl": "https://web.fountain.com/c/belay/belay/US"
+    },
+    {
+      "key": "bojangles-fountain",
+      "company": "bojangles",
+      "provider": "fountain",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "fountain",
+      "careersUrl": "https://web.fountain.com/c/bojangles/bojangles/US"
+    },
+    {
+      "key": "brightside-health-fountain",
+      "company": "brightside health",
+      "provider": "fountain",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "fountain",
+      "careersUrl": "https://web.fountain.com/c/brightside-health/brightside-health/US"
+    },
+    {
+      "key": "carecar-fountain",
+      "company": "carecar",
+      "provider": "fountain",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "fountain",
+      "careersUrl": "https://web.fountain.com/c/carecar/carecar/US"
+    },
+    {
+      "key": "acurio-getro",
+      "company": "acurio",
+      "provider": "getro",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "getro",
+      "careersUrl": "https://acurio.getro.com/jobs"
+    },
+    {
+      "key": "arborview-getro",
+      "company": "arborview",
+      "provider": "getro",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "getro",
+      "careersUrl": "https://arborview.getro.com/jobs"
+    },
+    {
+      "key": "cofounderscapital-getro",
+      "company": "cofounderscapital",
+      "provider": "getro",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "getro",
+      "careersUrl": "https://cofounderscapital.getro.com/jobs"
+    },
+    {
+      "key": "coinbase-getro",
+      "company": "coinbase",
+      "provider": "getro",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "getro",
+      "careersUrl": "https://coinbase.getro.com/jobs"
+    },
+    {
+      "key": "communitech-getro",
+      "company": "communitech",
+      "provider": "getro",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "getro",
+      "careersUrl": "https://communitech.getro.com/jobs"
+    },
+    {
+      "key": "500degreesstudio-hrmdirect",
+      "company": "500degreesstudio",
+      "provider": "hrmdirect",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "hrmdirect",
+      "careersUrl": "https://500degreesstudio.hrmdirect.com/employment/job-openings.php?search=true"
+    },
+    {
+      "key": "5rcattle-hrmdirect",
+      "company": "5rcattle",
+      "provider": "hrmdirect",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "hrmdirect",
+      "careersUrl": "https://5rcattle.hrmdirect.com/employment/job-openings.php?search=true"
+    },
+    {
+      "key": "absc-us-hrmdirect",
+      "company": "absc us",
+      "provider": "hrmdirect",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "hrmdirect",
+      "careersUrl": "https://absc-us.hrmdirect.com/employment/job-openings.php?search=true"
+    },
+    {
+      "key": "activecapitalltd-hrmdirect",
+      "company": "activecapitalltd",
+      "provider": "hrmdirect",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "hrmdirect",
+      "careersUrl": "https://activecapitalltd.hrmdirect.com/employment/job-openings.php?search=true"
+    },
+    {
+      "key": "adhoc-hrmdirect",
+      "company": "adhoc",
+      "provider": "hrmdirect",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "hrmdirect",
+      "careersUrl": "https://adhoc.hrmdirect.com/employment/job-openings.php?search=true"
+    },
+    {
+      "key": "abysalto-talentlyft",
+      "company": "abysalto",
+      "provider": "talentlyft",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talentlyft",
+      "careersUrl": "https://abysalto.talentlyft.com/"
+    },
+    {
+      "key": "addiko-ag-talentlyft",
+      "company": "addiko ag",
+      "provider": "talentlyft",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talentlyft",
+      "careersUrl": "https://addiko-ag.talentlyft.com/"
+    },
+    {
+      "key": "adriatic-bank-talentlyft",
+      "company": "adriatic bank",
+      "provider": "talentlyft",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talentlyft",
+      "careersUrl": "https://adriatic-bank.talentlyft.com/"
+    },
+    {
+      "key": "alleyesonscreens-talentlyft",
+      "company": "alleyesonscreens",
+      "provider": "talentlyft",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talentlyft",
+      "careersUrl": "https://alleyesonscreens.talentlyft.com/"
+    },
+    {
+      "key": "allied-global-its-talentlyft",
+      "company": "allied global its",
+      "provider": "talentlyft",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talentlyft",
+      "careersUrl": "https://allied-global-its.talentlyft.com/"
+    },
+    {
+      "key": "aeroates-ltd-talexio",
+      "company": "aeroates ltd",
+      "provider": "talexio",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talexio",
+      "careersUrl": "https://aeroates-ltd.talexio.com/jobs/"
+    },
+    {
+      "key": "aerviva-talexio",
+      "company": "aerviva",
+      "provider": "talexio",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talexio",
+      "careersUrl": "https://aerviva.talexio.com/jobs/"
+    },
+    {
+      "key": "aviagroup-talexio",
+      "company": "aviagroup",
+      "provider": "talexio",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talexio",
+      "careersUrl": "https://aviagroup.talexio.com/jobs/"
+    },
+    {
+      "key": "bnf-talexio",
+      "company": "bnf",
+      "provider": "talexio",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talexio",
+      "careersUrl": "https://bnf.talexio.com/jobs/"
+    },
+    {
+      "key": "chiswick-talexio",
+      "company": "chiswick",
+      "provider": "talexio",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "talexio",
+      "careersUrl": "https://chiswick.talexio.com/jobs/"
+    },
+    {
+      "key": "2care-teamtailor",
+      "company": "2care",
+      "provider": "teamtailor",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "teamtailor",
+      "careersUrl": "https://2care.teamtailor.com/",
+      "host": "2care.teamtailor.com"
+    },
+    {
+      "key": "2lcollection-teamtailor",
+      "company": "2lcollection",
+      "provider": "teamtailor",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "teamtailor",
+      "careersUrl": "https://2lcollection.teamtailor.com/",
+      "host": "2lcollection.teamtailor.com"
+    },
+    {
+      "key": "adaptiveteams-teamtailor",
+      "company": "adaptiveteams",
+      "provider": "teamtailor",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "teamtailor",
+      "careersUrl": "https://adaptiveteams.teamtailor.com/",
+      "host": "adaptiveteams.teamtailor.com"
+    },
+    {
+      "key": "advenica-teamtailor",
+      "company": "advenica",
+      "provider": "teamtailor",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "teamtailor",
+      "careersUrl": "https://advenica.teamtailor.com/",
+      "host": "advenica.teamtailor.com"
+    },
+    {
+      "key": "africaai-teamtailor",
+      "company": "africaai",
+      "provider": "teamtailor",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "teamtailor",
+      "careersUrl": "https://africaai.teamtailor.com/",
+      "host": "africaai.teamtailor.com"
+    },
+    {
+      "key": "black-pen-recruitment-manatal",
+      "company": " black pen recruitment",
+      "provider": "manatal",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "manatal",
+      "careersUrl": "https://www.careers-page.com/-black-pen-recruitment"
+    },
+    {
+      "key": "1950labs-manatal",
+      "company": "1950labs",
+      "provider": "manatal",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "manatal",
+      "careersUrl": "https://www.careers-page.com/1950labs"
+    },
+    {
+      "key": "1st-jobscom-manatal",
+      "company": "1st jobscom",
+      "provider": "manatal",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "manatal",
+      "careersUrl": "https://www.careers-page.com/1st-jobscom"
+    },
+    {
+      "key": "24-mag-manatal",
+      "company": "24 mag",
+      "provider": "manatal",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "manatal",
+      "careersUrl": "ï»¿https://24-mag.careers-page.com/"
+    },
+    {
+      "key": "247protas-manatal",
+      "company": "247protas",
+      "provider": "manatal",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "manatal",
+      "careersUrl": "https://www.careers-page.com/247protas"
+    },
+    {
+      "key": "3distica-zoho",
+      "company": "3distica",
+      "provider": "zoho",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "Zoho",
+      "careersUrl": "https://3distica.zohorecruit.com/"
+    },
+    {
+      "key": "4rsvp-zoho",
+      "company": "4rsvp",
+      "provider": "zoho",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "Zoho",
+      "careersUrl": "https://4rsvp.zohorecruit.com/"
+    },
+    {
+      "key": "abiastate-zoho",
+      "company": "abiastate",
+      "provider": "zoho",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "Zoho",
+      "careersUrl": "https://abiastate.zohorecruit.com/"
+    },
+    {
+      "key": "achievetestprep-zoho",
+      "company": "achievetestprep",
+      "provider": "zoho",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "Zoho",
+      "careersUrl": "https://achievetestprep.zohorecruit.com/"
+    },
+    {
+      "key": "acspro-zoho",
+      "company": "acspro",
+      "provider": "zoho",
+      "importedFrom": "generated_ats_reference/jobs.db",
+      "referenceAtsName": "Zoho",
+      "careersUrl": "https://acspro.zohorecruit.com/"
     }
   ]
 }

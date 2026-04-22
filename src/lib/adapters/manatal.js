@@ -83,7 +83,7 @@ export async function fetchManatalJobs(source) {
 }
 
 function resolveManatalConfig(source) {
-  const careersUrl = String(source.careersUrl || source.boardUrl || "").trim();
+  const careersUrl = sanitizeUrl(source.careersUrl || source.boardUrl || "");
   const parsed = safeUrl(careersUrl);
   const host = String(parsed?.hostname || "").toLowerCase();
   const pathParts = String(parsed?.pathname || "").split("/").filter(Boolean);
@@ -167,4 +167,11 @@ function safeUrl(value) {
 
 function cleanInlineText(value) {
   return cleanText(decodeHtmlEntities(String(value || "").replace(/<[^>]+>/g, " "))) || "";
+}
+
+function sanitizeUrl(value) {
+  return String(value || "")
+    .replace(/^\uFEFF+/, "")
+    .replace(/^(?:ï»¿)+/i, "")
+    .trim();
 }

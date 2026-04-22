@@ -14,7 +14,7 @@ export async function fetchTheApplicantManagerJobs(source) {
   const seenUrls = new Set();
   let currentDepartment = "";
 
-  const paragraphPattern = /<p[^>]*class=["']([^"']*\bpos_title_list\b[^"']*)["'][^>]*>([\s\S]*?)<\/p>/gi;
+  const paragraphPattern = /<p[^>]*class=["']([^"']*)["'][^>]*>([\s\S]*?)<\/p>/gi;
   const linkPattern = /<a[^>]*class=["'][^"']*\bpos_title_list\b[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i;
 
   let paragraphMatch = paragraphPattern.exec(html);
@@ -35,13 +35,8 @@ export async function fetchTheApplicantManagerJobs(source) {
     }
 
     const applyUrl = absoluteUrl(linkMatch[1], careersUrl);
-    if (!applyUrl || seenUrls.has(applyUrl)) {
-      paragraphMatch = paragraphPattern.exec(html);
-      continue;
-    }
-
     const title = cleanInlineText(linkMatch[2]);
-    if (!title || title.toLowerCase() === "resume") {
+    if (!applyUrl || !title || title.toLowerCase() === "resume" || seenUrls.has(applyUrl)) {
       paragraphMatch = paragraphPattern.exec(html);
       continue;
     }

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>JobTrawl Application Tracker</title>
+    <link rel="icon" type="image/png" sizes="64x64" href="/jobtrawl-favicon.png">
+    <link rel="stylesheet" href="/styles.css?v=20260421c">
+  </head>
+  <body>
+      <div class="page-shell tracker-page-shell">
+        <main class="tracker-layout">
+          <div class="tracker-back-row">
+            <a class="tracker-back-button" href="/">Back to search</a>
+          </div>
+          <section class="panel tracker-hero-panel tracker-hero-surface">
+            <div class="tracker-hero-grid">
+              <div class="tracker-hero-copy-block">
+                <div class="tracker-title-row">
+                  <img class="hero-logo tracker-hero-logo" src="/jobtrawl-logo.png" alt="JobTrawl">
+                <div class="tracker-title-block">
+                    <h1>Application Tracker</h1>
+                    <p class="tracker-kicker">Track every application in one local sheet</p>
+                    <p class="tracker-hero-copy">Review saved jobs, update application details, upload resume and cover letter files, and keep follow-up materials organized in one place. Each row saves locally in JobTrawl and syncs to the Excel tracker automatically.</p>
+                  </div>
+                </div>
+            </div>
+
+            <aside class="tracker-hero-aside">
+              <div class="tracker-aside-card">
+                <div class="toolbar-label">Built For Your Workflow</div>
+                <h2>Spreadsheet clarity without leaving the app</h2>
+                <div class="tracker-aside-list">
+                  <span>Auto-saved local Excel tracker</span>
+                  <span>Application status updates</span>
+                  <span>Resume and cover letter uploads</span>
+                  <span>Job listing links and PDF copies</span>
+                </div>
+              </div>
+            </aside>
+          </div>
+
+          <div id="tracker-stats" class="tracker-stats"></div>
+          <div class="tracker-storage-row">
+            <div class="tracker-storage-stack">
+              <button id="open-csv-button" class="tracker-action-button" type="button">Open Excel tracker</button>
+              <div id="tracker-storage" class="tracker-storage muted-copy"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel tracker-table-panel">
+          <div class="tracker-table-toolbar">
+            <div>
+              <p class="toolbar-label">Saved Roles</p>
+              <h2 id="tracker-count">0 tracked applications</h2>
+              <p class="tracker-table-subcopy">Edit any row directly. Every change is saved locally automatically.</p>
+            </div>
+            <div class="tracker-table-actions">
+              <button id="add-application-button" class="search-button" type="button">Add blank row</button>
+            </div>
+          </div>
+
+          <div id="tracker-empty" class="empty-state" hidden>
+            No applications tracked yet. Save a role from the search results or add a blank row here.
+          </div>
+
+          <div class="tracker-table-wrap">
+            <div class="tracker-record-list" id="tracker-table" hidden>
+              <div id="tracker-rows"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/applications.js?v=20260421h"></script>
+  </body>
+</html>

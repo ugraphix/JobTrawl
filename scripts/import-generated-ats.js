@@ -188,9 +188,9 @@ function createSourceFromCompany(company, provider) {
     careersUrl: normalizeCareersUrl(url),
     importedFrom: "generated_ats_reference/jobs.db",
     importedCompanyId: company.id,
-    inventorySource: "generated-ats",
-    atsCollectionKey: `imported-${provider}`,
-    atsCollectionLabel: `${providerLabel(provider)} (Imported ATS inventory)`,
+    inventorySource: "generated_ats",
+    atsCollectionKey: `generated-${provider}`,
+    atsCollectionLabel: `${providerLabel(provider)} (Generated ATS inventory)`,
     generatedInventory: true,
   };
 
@@ -467,3 +467,4 @@ function providerLabel(provider) {
 
   return labels[provider] || provider;
 }
+

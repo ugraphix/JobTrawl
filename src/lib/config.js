@@ -26,6 +26,7 @@ export async function loadSourceConfig() {
   return merged;
 }
 
+
 export async function loadLocationConfig() {
   const raw = await fs.readFile(LOCATION_PATH, "utf8");
   const parsed = JSON.parse(raw);

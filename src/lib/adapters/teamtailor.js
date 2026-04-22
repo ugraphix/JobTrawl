@@ -1,4 +1,4 @@
-import { absoluteUrl, buildNormalizedJob, cleanText, decodeHtmlEntities, fetchText } from "./shared.js";
+import { absoluteUrl, buildNormalizedJob, cleanText, decodeHtmlEntities, deriveTitleFromUrl, fetchText } from "./shared.js";
 
 export async function fetchTeamtailorJobs(source) {
   const subdomain = String(source.subdomain || source.slug || "").trim().toLowerCase();
@@ -21,13 +21,15 @@ export async function fetchTeamtailorJobs(source) {
     const itemHtml = String(itemMatch[1] || "");
     const href = String(itemHtml.match(hrefPattern)?.[1] || "").trim();
     const applyUrl = absoluteUrl(href, careersUrl);
-    if (!applyUrl || seenUrls.has(applyUrl)) {
+    if (!applyUrl || !looksLikeTeamtailorJobUrl(applyUrl, careersUrl) || seenUrls.has(applyUrl)) {
       itemMatch = itemPattern.exec(html);
       continue;
     }
 
     const title = cleanInlineText(itemHtml.match(titleAttrPattern)?.[1] || "")
       || cleanInlineText(itemHtml.match(titleBodyPattern)?.[1] || "")
+      || cleanInlineText(itemHtml.match(/<h\d[^>]*>([\s\S]*?)<\/h\d>/i)?.[1] || "")
+      || deriveTitleFromUrl(applyUrl)
       || "Untitled Position";
     const metaParts = extractMetaParts(String(itemHtml.match(metaPattern)?.[1] || ""));
     const department = metaParts.length > 1 ? metaParts[0] : null;
@@ -68,4 +70,23 @@ function extractMetaParts(value) {
 
 function cleanInlineText(value) {
   return cleanText(decodeHtmlEntities(String(value || "").replace(/<[^>]+>/g, " "))) || "";
+}
+
+function looksLikeTeamtailorJobUrl(applyUrl, careersUrl) {
+  try {
+    const jobUrl = new URL(applyUrl, careersUrl);
+    const careersHost = new URL(careersUrl).hostname;
+    if (jobUrl.hostname !== careersHost) {
+      return false;
+    }
+
+    const path = jobUrl.pathname.toLowerCase();
+    if (path === "/" || path === "/jobs") {
+      return false;
+    }
+
+    return /\/jobs\/.+/.test(path);
+  } catch {
+    return false;
+  }
 }

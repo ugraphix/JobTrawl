@@ -221,7 +221,7 @@ On the current branch, the repo contains:
 - about `120` curated sources
 - about `10,186` generated ATS sources
 
-Generated inventory is created from the imported generated ATS reference database using:
+Generated inventory is created from the imported reference database using:
 
 - `npm run import:generated-ats`
 

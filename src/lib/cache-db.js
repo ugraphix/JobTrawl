@@ -10,15 +10,18 @@ const DEFAULT_SYNC_INTERVAL_MS = Number(process.env.CACHE_SYNC_INTERVAL_MS || 30
 const DEFAULT_SOURCE_MAX_AGE_MS = Number(process.env.CACHE_SOURCE_MAX_AGE_MS || 6 * 60 * 60 * 1000);
 const DEFAULT_TTL_MS = Number(process.env.CACHE_POSTING_TTL_MS || 45 * 24 * 60 * 60 * 1000);
 const DEFAULT_SYNC_CONCURRENCY = Math.max(1, Number(process.env.CACHE_SYNC_CONCURRENCY || 4));
-const DEFAULT_SEARCH_CONCURRENCY = Math.max(1, Number(process.env.CACHE_SEARCH_CONCURRENCY || 8));
-const DEFAULT_SOURCE_SEARCH_TIMEOUT_MS = Math.max(1000, Number(process.env.CACHE_SOURCE_SEARCH_TIMEOUT_MS || 45000));
-const DEFAULT_SOURCE_SYNC_TIMEOUT_MS = Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, Number(process.env.CACHE_SOURCE_SYNC_TIMEOUT_MS || 60000));
+const DEFAULT_SEARCH_CONCURRENCY = Math.max(1, Number(process.env.CACHE_SEARCH_CONCURRENCY || 20));
+const DEFAULT_SOURCE_SEARCH_TIMEOUT_MS = Math.max(1000, Number(process.env.CACHE_SOURCE_SEARCH_TIMEOUT_MS || 4500));
+const DEFAULT_SOURCE_SYNC_TIMEOUT_MS = Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, Number(process.env.CACHE_SOURCE_SYNC_TIMEOUT_MS || 15000));
+const DEFAULT_SEARCH_MAX_DURATION_MS = Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, Number(process.env.CACHE_SEARCH_MAX_DURATION_MS || 30000));
+const GENERATED_INVENTORY_WARM_BATCH_SIZE = Math.max(1, Number(process.env.GENERATED_INVENTORY_WARM_BATCH_SIZE || 60));
 
 let database = null;
 let cacheBackend = "sqlite";
 let jsonCache = {
   postings: [],
   sourceState: {},
+  postingHistory: {},
 };
 let backgroundSyncTimer = null;
 const sourceSyncPromises = new Map();
@@ -87,6 +90,24 @@ export function initCacheDb() {
         last_job_count INTEGER NOT NULL DEFAULT 0,
         last_error TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS posting_history (
+        source_key TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        company TEXT NOT NULL,
+        title TEXT NOT NULL,
+        apply_url TEXT NOT NULL,
+        first_seen_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        missing_since INTEGER,
+        first_posted_at TEXT,
+        last_posted_at TEXT,
+        last_reappeared_at INTEGER,
+        reappearance_count INTEGER NOT NULL DEFAULT 0,
+        last_date_refresh_at INTEGER,
+        date_refresh_count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (source_key, external_id)
+      );
     `);
     cacheBackend = "sqlite";
   } catch (error) {
@@ -111,15 +132,21 @@ export function getCacheStatus() {
   let cachedSources = 0;
 
   if (cacheBackend === "sqlite") {
-    const stats = database.prepare(`
-      SELECT
-        COUNT(*) AS cachedJobs,
-        COUNT(DISTINCT source_key) AS cachedSources
-      FROM cached_postings
-      WHERE expires_at > ?
-    `).get(Date.now());
-    cachedJobs = Number(stats?.cachedJobs || 0);
-    cachedSources = Number(stats?.cachedSources || 0);
+    try {
+      const stats = database.prepare(`
+        SELECT
+          COUNT(*) AS cachedJobs,
+          COUNT(DISTINCT source_key) AS cachedSources
+        FROM cached_postings
+        WHERE expires_at > ?
+      `).get(Date.now());
+      cachedJobs = Number(stats?.cachedJobs || 0);
+      cachedSources = Number(stats?.cachedSources || 0);
+    } catch (error) {
+      recoverToJsonCache(error);
+      cachedJobs = jsonCache.postings.length;
+      cachedSources = new Set(jsonCache.postings.map((posting) => posting.source_key)).size;
+    }
   } else {
     cachedJobs = jsonCache.postings.length;
     cachedSources = new Set(jsonCache.postings.map((posting) => posting.source_key)).size;
@@ -138,12 +165,16 @@ export function getCachedSourceKeys() {
   initCacheDb();
 
   if (cacheBackend === "sqlite") {
-    const rows = database.prepare(`
-      SELECT DISTINCT source_key
-      FROM cached_postings
-      WHERE expires_at > ?
-    `).all(Date.now());
-    return new Set(rows.map((row) => String(row?.source_key || "")).filter(Boolean));
+    try {
+      const rows = database.prepare(`
+        SELECT DISTINCT source_key
+        FROM cached_postings
+        WHERE expires_at > ?
+      `).all(Date.now());
+      return new Set(rows.map((row) => String(row?.source_key || "")).filter(Boolean));
+    } catch (error) {
+      recoverToJsonCache(error);
+    }
   }
 
   return new Set(
@@ -202,10 +233,14 @@ export async function loadSourceResultsForSearch(sources, filters = {}, options 
 
   const allowSync = Boolean(options.allowSync);
   const onSourceComplete = typeof options.onSourceComplete === "function" ? options.onSourceComplete : null;
+  const maxDurationMs = Number(options.maxDurationMs) > 0 ? Number(options.maxDurationMs) : DEFAULT_SEARCH_MAX_DURATION_MS;
+  const deadlineAt = Date.now() + maxDurationMs;
   const results = new Array(sources.length);
 
   await runWithConcurrency(sources, DEFAULT_SEARCH_CONCURRENCY, async (source, index) => {
-    const result = await loadSingleSourceResult(source, filters, allowSync);
+    const result = Date.now() >= deadlineAt
+      ? buildSearchTimeBudgetResult(source)
+      : await loadSingleSourceResult(source, filters, allowSync);
     results[index] = result;
     if (onSourceComplete) {
       onSourceComplete({ source, index, result });
@@ -215,10 +250,100 @@ export async function loadSourceResultsForSearch(sources, filters = {}, options 
   return results;
 }
 
+export function loadGeneratedInventorySearchResult(sources, filters = {}) {
+  initCacheDb();
+  pruneExpiredCache();
+
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return null;
+  }
+
+  const jobs = readCachedJobsForSourceKeys(
+    sources.map((source) => source.key),
+    filters
+  );
+  void warmGeneratedInventorySources(sources).catch(() => {});
+  return {
+    source: {
+      key: "generated-ats-inventory",
+      company: "Generated ATS Inventory",
+      provider: "generated-ats",
+    },
+    jobs,
+    error: null,
+    progressMeta: {
+      mode: "generated_inventory",
+      jobs: jobs.length,
+      sourceCount: sources.length,
+    },
+  };
+}
+
+export async function warmGeneratedInventorySources(sources, options = {}) {
+  initCacheDb();
+  pruneExpiredCache();
+
+  const batchSize = Number(options.batchSize) > 0
+    ? Number(options.batchSize)
+    : GENERATED_INVENTORY_WARM_BATCH_SIZE;
+  const staleSources = (Array.isArray(sources) ? sources : [])
+    .filter((source) => isGeneratedInventorySource(source))
+    .filter((source) => !safeIsSourceFresh(source.key));
+  if (staleSources.length === 0) {
+    return {
+      attemptedSources: 0,
+      syncedSources: 0,
+      failedSources: 0,
+      errors: [],
+    };
+  }
+
+  const selected = selectGeneratedInventoryWarmBatch(staleSources, batchSize);
+  return ensureSourcesCached(selected, {}, { forceSync: true });
+}
+
+function buildSearchTimeBudgetResult(source) {
+  const cachedJobs = safeReadCachedJobsForSource(source.key);
+  if (cachedJobs.length > 0) {
+    return {
+      source,
+      jobs: cachedJobs,
+      error: null,
+      progressMeta: {
+        mode: "time_budget_fallback",
+        jobs: cachedJobs.length,
+      },
+    };
+  }
+
+  return {
+    source,
+    jobs: [],
+    error: "Search time budget exceeded",
+    progressMeta: {
+      mode: "time_budget_exceeded",
+      jobs: 0,
+    },
+  };
+}
+
 async function loadSingleSourceResult(source, filters, allowSync) {
-  const existingJobs = safeReadCachedJobsForSource(source.key);
-  const hasFreshCache = safeIsSourceFresh(source.key);
   const requiresBatchCaching = isGeneratedInventorySource(source);
+  const existingJobs = safeReadCachedJobsForSource(source.key);
+
+  if (requiresBatchCaching) {
+    return {
+      source,
+      jobs: existingJobs,
+      error: null,
+      progressMeta: {
+        mode: "generated_cache",
+        jobs: existingJobs.length,
+      },
+    };
+  }
+
+  const hasFreshCache = safeIsSourceFresh(source.key);
 
   if (hasFreshCache && existingJobs.length > 0) {
     return {
@@ -255,20 +380,8 @@ async function loadSingleSourceResult(source, filters, allowSync) {
     };
   }
 
-  if (requiresBatchCaching) {
-    return {
-      source,
-      jobs: existingJobs,
-      error: null,
-      progressMeta: {
-        mode: "generated_cache",
-        jobs: existingJobs.length,
-      },
-    };
-  }
-
   try {
-    await syncSourceToCache(source, filters, { timeoutMs: DEFAULT_SOURCE_SEARCH_TIMEOUT_MS });
+    await syncSourceToCache(source, filters, { timeoutMs: getSourceSearchTimeoutMs(source) });
     const syncedJobs = safeReadCachedJobsForSource(source.key);
     return {
       source,
@@ -283,7 +396,7 @@ async function loadSingleSourceResult(source, filters, allowSync) {
     const fallbackJobs = safeReadCachedJobsForSource(source.key);
     if (fallbackJobs.length === 0) {
       try {
-        const liveJobs = await fetchJobsForSourceWithTimeout(source, filters, DEFAULT_SOURCE_SEARCH_TIMEOUT_MS);
+        const liveJobs = await fetchJobsForSourceWithTimeout(source, filters, getSourceSearchTimeoutMs(source));
         return {
           source,
           jobs: liveJobs,
@@ -381,8 +494,10 @@ async function syncSourceToCache(source, filters = {}, options = {}) {
 
 function replaceSourceJobs(db, source, jobs, now) {
   const dedupedJobs = dedupeJobsForCache(source, jobs);
+  const previousExternalIds = new Set(safeReadCachedJobsForSource(source.key).map((job) => String(job.externalId || "")));
 
   if (cacheBackend === "json") {
+    updateJsonPostingHistory(source, dedupedJobs, now, previousExternalIds);
     jsonCache.postings = jsonCache.postings.filter((posting) => posting.source_key !== source.key);
     const mapped = dedupedJobs.map((job) => ({
       source_key: source.key,
@@ -417,6 +532,7 @@ function replaceSourceJobs(db, source, jobs, now) {
 
   db.exec("BEGIN");
   try {
+    updateSqlitePostingHistory(db, source, dedupedJobs, now, previousExternalIds);
     db.prepare("DELETE FROM cached_postings WHERE source_key = ?").run(source.key);
 
     const statement = db.prepare(`
@@ -541,6 +657,137 @@ function isSourceStale(sourceKey) {
   return Date.now() - lastSyncedAt > DEFAULT_SOURCE_MAX_AGE_MS;
 }
 
+function updateSqlitePostingHistory(db, source, jobs, now, previousExternalIds) {
+  const existingRows = db.prepare(`
+    SELECT *
+    FROM posting_history
+    WHERE source_key = ?
+  `).all(source.key);
+  const existingById = new Map(existingRows.map((row) => [String(row.external_id || ""), row]));
+  const activeExternalIds = new Set(jobs.map((job) => String(job.externalId || job.id || job.applyUrl || "")));
+
+  const upsertStatement = db.prepare(`
+    INSERT INTO posting_history (
+      source_key, external_id, company, title, apply_url,
+      first_seen_at, last_seen_at, missing_since,
+      first_posted_at, last_posted_at,
+      last_reappeared_at, reappearance_count,
+      last_date_refresh_at, date_refresh_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source_key, external_id) DO UPDATE SET
+      company = excluded.company,
+      title = excluded.title,
+      apply_url = excluded.apply_url,
+      last_seen_at = excluded.last_seen_at,
+      missing_since = excluded.missing_since,
+      last_posted_at = excluded.last_posted_at,
+      last_reappeared_at = excluded.last_reappeared_at,
+      reappearance_count = excluded.reappearance_count,
+      last_date_refresh_at = excluded.last_date_refresh_at,
+      date_refresh_count = excluded.date_refresh_count
+  `);
+  const markMissingStatement = db.prepare(`
+    UPDATE posting_history
+    SET missing_since = COALESCE(missing_since, ?)
+    WHERE source_key = ? AND external_id = ?
+  `);
+
+  for (const previousExternalId of previousExternalIds) {
+    if (!previousExternalId || activeExternalIds.has(previousExternalId)) {
+      continue;
+    }
+    markMissingStatement.run(now, source.key, previousExternalId);
+  }
+
+  for (const job of jobs) {
+    const externalId = String(job.externalId || job.id || job.applyUrl || "");
+    if (!externalId) {
+      continue;
+    }
+
+    const existing = existingById.get(externalId);
+    const currentPostedAt = normalizeHistoryDate(job.postedAt || job.updatedAt);
+    const firstSeenAt = Number(existing?.first_seen_at || now);
+    const wasMissing = Number(existing?.missing_since || 0) > 0;
+    const previousPostedAt = normalizeHistoryDate(existing?.last_posted_at || existing?.first_posted_at);
+    const dateRefreshed = Boolean(
+      previousPostedAt
+      && currentPostedAt
+      && currentPostedAt !== previousPostedAt
+      && getHistoryTime(currentPostedAt) > getHistoryTime(previousPostedAt)
+    );
+
+    upsertStatement.run(
+      source.key,
+      externalId,
+      job.company || source.company,
+      job.title || "Untitled role",
+      job.applyUrl || "",
+      firstSeenAt,
+      now,
+      null,
+      normalizeHistoryDate(existing?.first_posted_at || currentPostedAt),
+      currentPostedAt || previousPostedAt,
+      wasMissing ? now : Number(existing?.last_reappeared_at || 0) || null,
+      Number(existing?.reappearance_count || 0) + (wasMissing ? 1 : 0),
+      dateRefreshed ? now : Number(existing?.last_date_refresh_at || 0) || null,
+      Number(existing?.date_refresh_count || 0) + (dateRefreshed ? 1 : 0)
+    );
+  }
+}
+
+function updateJsonPostingHistory(source, jobs, now, previousExternalIds) {
+  const sourceHistory = jsonCache.postingHistory?.[source.key] || {};
+  const activeExternalIds = new Set();
+
+  for (const previousExternalId of previousExternalIds) {
+    if (!previousExternalId) {
+      continue;
+    }
+    const existing = sourceHistory[previousExternalId];
+    if (existing && !jobs.some((job) => String(job.externalId || job.id || job.applyUrl || "") === previousExternalId)) {
+      existing.missing_since = existing.missing_since || now;
+    }
+  }
+
+  for (const job of jobs) {
+    const externalId = String(job.externalId || job.id || job.applyUrl || "");
+    if (!externalId) {
+      continue;
+    }
+    activeExternalIds.add(externalId);
+    const existing = sourceHistory[externalId] || {};
+    const currentPostedAt = normalizeHistoryDate(job.postedAt || job.updatedAt);
+    const previousPostedAt = normalizeHistoryDate(existing.last_posted_at || existing.first_posted_at);
+    const wasMissing = Number(existing.missing_since || 0) > 0;
+    const dateRefreshed = Boolean(
+      previousPostedAt
+      && currentPostedAt
+      && currentPostedAt !== previousPostedAt
+      && getHistoryTime(currentPostedAt) > getHistoryTime(previousPostedAt)
+    );
+
+    sourceHistory[externalId] = {
+      source_key: source.key,
+      external_id: externalId,
+      company: job.company || source.company,
+      title: job.title || "Untitled role",
+      apply_url: job.applyUrl || "",
+      first_seen_at: Number(existing.first_seen_at || now),
+      last_seen_at: now,
+      missing_since: null,
+      first_posted_at: normalizeHistoryDate(existing.first_posted_at || currentPostedAt),
+      last_posted_at: currentPostedAt || previousPostedAt,
+      last_reappeared_at: wasMissing ? now : Number(existing.last_reappeared_at || 0) || null,
+      reappearance_count: Number(existing.reappearance_count || 0) + (wasMissing ? 1 : 0),
+      last_date_refresh_at: dateRefreshed ? now : Number(existing.last_date_refresh_at || 0) || null,
+      date_refresh_count: Number(existing.date_refresh_count || 0) + (dateRefreshed ? 1 : 0),
+    };
+  }
+
+  jsonCache.postingHistory[source.key] = sourceHistory;
+}
+
 function safeIsSourceFresh(sourceKey) {
   try {
     return !isSourceStale(sourceKey);
@@ -551,33 +798,111 @@ function safeIsSourceFresh(sourceKey) {
 
 function readCachedJobsForSource(sourceKey) {
   initCacheDb();
+  const jsonRows = readJsonCachedRowsForSourceKeys([sourceKey]);
 
   if (cacheBackend === "sqlite") {
-    const rows = database.prepare(`
-      SELECT *
-      FROM cached_postings
-      WHERE source_key = ?
-        AND expires_at > ?
-      ORDER BY COALESCE(posted_at, updated_at, '') DESC
-    `).all(sourceKey, Date.now());
-    return rows.map(mapCachedRowToJob);
+    try {
+      const rows = database.prepare(`
+        SELECT
+          postings.*,
+          history.first_seen_at,
+          history.last_seen_at,
+          history.missing_since,
+          history.first_posted_at,
+          history.last_posted_at AS history_last_posted_at,
+          history.last_reappeared_at,
+          history.reappearance_count,
+          history.last_date_refresh_at,
+          history.date_refresh_count
+        FROM cached_postings AS postings
+        LEFT JOIN posting_history AS history
+          ON history.source_key = postings.source_key
+         AND history.external_id = postings.external_id
+        WHERE postings.source_key = ?
+          AND expires_at > ?
+        ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+      `).all(sourceKey, Date.now());
+      return mergeCachedJobRows(rows, jsonRows).map(mapCachedRowToJob);
+    } catch (error) {
+      recoverToJsonCache(error);
+    }
   }
 
-  return jsonCache.postings
-    .filter((posting) => posting.source_key === sourceKey && Number(posting.expires_at || 0) > Date.now())
-    .sort((left, right) => {
-      const leftTime = new Date(left.posted_at || left.updated_at || 0).getTime() || 0;
-      const rightTime = new Date(right.posted_at || right.updated_at || 0).getTime() || 0;
-      return rightTime - leftTime;
-    })
-    .map(mapCachedRowToJob);
+  return jsonRows.map(mapCachedRowToJob);
+}
+
+function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
+  initCacheDb();
+
+  const normalizedKeys = [...new Set(
+    (Array.isArray(sourceKeys) ? sourceKeys : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  )];
+  if (normalizedKeys.length === 0) {
+    return [];
+  }
+
+  const keywordPrefilter = buildGeneratedInventoryKeywordPrefilter(filters);
+  const jsonRows = readJsonCachedRowsForSourceKeys(normalizedKeys, keywordPrefilter);
+
+  if (cacheBackend === "sqlite") {
+    try {
+      const allRows = [];
+      const chunkSize = 400;
+      for (let index = 0; index < normalizedKeys.length; index += chunkSize) {
+        const chunk = normalizedKeys.slice(index, index + chunkSize);
+        const placeholders = chunk.map(() => "?").join(", ");
+        const textExpression = "LOWER(COALESCE(postings.title, '') || ' ' || COALESCE(postings.search_text, '') || ' ' || COALESCE(postings.description_snippet, ''))";
+        const keywordClause = keywordPrefilter
+          ? ` AND (${buildGeneratedInventoryKeywordSqlClause(textExpression, keywordPrefilter)})`
+          : "";
+        const statement = database.prepare(`
+          SELECT
+            postings.*,
+            history.first_seen_at,
+            history.last_seen_at,
+            history.missing_since,
+            history.first_posted_at,
+            history.last_posted_at AS history_last_posted_at,
+            history.last_reappeared_at,
+            history.reappearance_count,
+            history.last_date_refresh_at,
+            history.date_refresh_count
+          FROM cached_postings AS postings
+          LEFT JOIN posting_history AS history
+            ON history.source_key = postings.source_key
+           AND history.external_id = postings.external_id
+          WHERE postings.source_key IN (${placeholders})
+            AND expires_at > ?
+            ${keywordClause}
+          ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+        `);
+          const rows = statement.all(
+            ...chunk,
+            Date.now(),
+            ...buildGeneratedInventoryKeywordSqlParams(keywordPrefilter)
+          );
+          allRows.push(...rows);
+        }
+          return mergeCachedJobRows(allRows, jsonRows).map(mapCachedRowToJob);
+      } catch (error) {
+        recoverToJsonCache(error);
+      }
+    }
+
+  return jsonRows.map(mapCachedRowToJob);
 }
 
 function pruneExpiredCache() {
   initCacheDb();
   if (cacheBackend === "sqlite") {
-    database.prepare("DELETE FROM cached_postings WHERE expires_at <= ?").run(Date.now());
-    return;
+    try {
+      database.prepare("DELETE FROM cached_postings WHERE expires_at <= ?").run(Date.now());
+      return;
+    } catch (error) {
+      recoverToJsonCache(error);
+    }
   }
 
   jsonCache.postings = jsonCache.postings.filter((posting) => Number(posting.expires_at || 0) > Date.now());
@@ -592,6 +917,24 @@ async function fetchJobsForSourceWithTimeout(source, filters, timeoutMs) {
   );
 }
 
+function getSourceSearchTimeoutMs(source) {
+  const sourceKey = String(source?.key || "").toLowerCase();
+  const provider = String(source?.provider || "").toLowerCase();
+  if (provider === "pcsx") {
+    return Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, 12000);
+  }
+  if (provider === "workday" || provider === "ashby" || provider === "greenhouse") {
+    return Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, 7000);
+  }
+  if (sourceKey === "workday-careerpage") {
+    return Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, 12000);
+  }
+  if (provider === "slalom") {
+    return Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, 10000);
+  }
+  return DEFAULT_SOURCE_SEARCH_TIMEOUT_MS;
+}
+
 function safeReadCachedJobsForSource(sourceKey) {
   try {
     return readCachedJobsForSource(sourceKey);
@@ -600,8 +943,56 @@ function safeReadCachedJobsForSource(sourceKey) {
   }
 }
 
+function selectGeneratedInventoryWarmBatch(sources, limit) {
+  const grouped = new Map();
+  for (const source of sources) {
+    const provider = String(source?.provider || "").toLowerCase() || "unknown";
+    if (!grouped.has(provider)) {
+      grouped.set(provider, []);
+    }
+    grouped.get(provider).push(source);
+  }
+
+  const providers = [...grouped.keys()].sort();
+  const selected = [];
+  while (selected.length < limit && providers.length > 0) {
+    let progress = false;
+    for (let index = providers.length - 1; index >= 0; index -= 1) {
+      const provider = providers[index];
+      const bucket = grouped.get(provider) || [];
+      if (bucket.length === 0) {
+        providers.splice(index, 1);
+        continue;
+      }
+      selected.push(bucket.shift());
+      progress = true;
+      if (bucket.length === 0) {
+        providers.splice(index, 1);
+      }
+      if (selected.length >= limit) {
+        break;
+      }
+    }
+    if (!progress) {
+      break;
+    }
+  }
+
+  return selected;
+}
+
+function recoverToJsonCache(error) {
+  database = null;
+  cacheBackend = "json";
+  syncStatus.lastError = `SQLite unavailable, using JSON cache fallback: ${error?.message || error}`;
+  loadJsonCache();
+}
+
 function isGeneratedInventorySource(source) {
-  return Boolean(source?.generatedInventory || source?.inventorySource === "generated-ats");
+  return Boolean(
+    source?.generatedInventory
+    || source?.inventorySource === "generated_ats"
+  );
 }
 
 async function runWithConcurrency(items, concurrency, worker) {
@@ -644,6 +1035,7 @@ function loadJsonCache() {
       jsonCache = {
         postings: Array.isArray(parsed?.postings) ? parsed.postings : [],
         sourceState: parsed?.sourceState && typeof parsed.sourceState === "object" ? parsed.sourceState : {},
+        postingHistory: parsed?.postingHistory && typeof parsed.postingHistory === "object" ? parsed.postingHistory : {},
       };
       return;
     }
@@ -654,6 +1046,7 @@ function loadJsonCache() {
   jsonCache = {
     postings: [],
     sourceState: {},
+    postingHistory: {},
   };
 }
 
@@ -666,7 +1059,149 @@ function saveJsonCache() {
   writeFileSync(JSON_CACHE_PATH, JSON.stringify(jsonCache, null, 2), "utf8");
 }
 
+function readJsonCachedRowsForSourceKeys(sourceKeys, keywordPrefilter = null) {
+  loadJsonCache();
+  const keySet = new Set(
+    (Array.isArray(sourceKeys) ? sourceKeys : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+  if (keySet.size === 0) {
+    return [];
+  }
+
+  return jsonCache.postings
+    .filter((posting) => keySet.has(String(posting.source_key || "")) && Number(posting.expires_at || 0) > Date.now())
+    .filter((posting) => matchesGeneratedInventoryKeywordPrefilter(posting, keywordPrefilter))
+    .sort((left, right) => {
+      const leftTime = new Date(left.posted_at || left.updated_at || 0).getTime() || 0;
+      const rightTime = new Date(right.posted_at || right.updated_at || 0).getTime() || 0;
+      return rightTime - leftTime;
+    })
+    .map((posting) => {
+      const history = jsonCache.postingHistory?.[String(posting.source_key || "")]?.[String(posting.external_id || "")] || {};
+      return { ...posting, ...history };
+    });
+}
+
+function buildGeneratedInventoryKeywordPrefilter(filters = {}) {
+  const keyword = String(filters?.keyword || "").trim().toLowerCase();
+  if (!keyword) {
+    return null;
+  }
+
+  const words = [...new Set(
+    keyword
+      .split(/\s+/)
+      .map((word) => word.replace(/[^a-z0-9.-]/gi, "").trim())
+      .filter((word) => word.length >= 2)
+  )];
+
+  if (words.length === 0) {
+    return null;
+  }
+
+  return {
+    phrase: keyword,
+    words,
+  };
+}
+
+function buildGeneratedInventoryKeywordSqlClause(textExpression, keywordPrefilter) {
+  if (!keywordPrefilter) {
+    return "1=1";
+  }
+
+  const wordClause = keywordPrefilter.words.map(() => `${textExpression} LIKE ?`).join(" AND ");
+  return `(${textExpression} LIKE ? OR (${wordClause}))`;
+}
+
+function buildGeneratedInventoryKeywordSqlParams(keywordPrefilter) {
+  if (!keywordPrefilter) {
+    return [];
+  }
+
+  return [
+    `%${keywordPrefilter.phrase}%`,
+    ...keywordPrefilter.words.map((word) => `%${word}%`),
+  ];
+}
+
+function matchesGeneratedInventoryKeywordPrefilter(posting, keywordPrefilter) {
+  if (!keywordPrefilter) {
+    return true;
+  }
+
+  const haystack = String([
+    posting?.title || "",
+    posting?.search_text || "",
+    posting?.description_snippet || "",
+  ].join(" ")).toLowerCase();
+
+  if (!haystack.trim()) {
+    return false;
+  }
+
+  if (haystack.includes(keywordPrefilter.phrase)) {
+    return true;
+  }
+
+  return keywordPrefilter.words.every((word) => haystack.includes(word));
+}
+
+function mergeCachedJobRows(sqliteRows, jsonRows) {
+  const merged = [];
+  const seen = new Set();
+  const jsonSources = new Set((Array.isArray(jsonRows) ? jsonRows : []).map((row) => String(row?.source_key || "")).filter(Boolean));
+
+  for (const row of Array.isArray(jsonRows) ? jsonRows : []) {
+    const key = buildCachedRowMergeKey(row);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(row);
+  }
+
+  for (const row of Array.isArray(sqliteRows) ? sqliteRows : []) {
+    const sourceKey = String(row?.source_key || "");
+    if (looksLikeApplicantProWrapperRow(row)) {
+      continue;
+    }
+    const key = buildCachedRowMergeKey(row);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(row);
+  }
+
+  return merged.sort((left, right) => {
+    const leftTime = new Date(left?.posted_at || left?.updated_at || 0).getTime() || 0;
+    const rightTime = new Date(right?.posted_at || right?.updated_at || 0).getTime() || 0;
+    return rightTime - leftTime;
+  });
+}
+
+function buildCachedRowMergeKey(row) {
+  const sourceKey = String(row?.source_key || "").trim();
+  const externalId = String(row?.external_id || "").trim();
+  const applyUrl = String(row?.apply_url || "").trim();
+  const title = String(row?.title || "").trim();
+  return [sourceKey, externalId || applyUrl || title].filter(Boolean).join("|");
+}
+
+function looksLikeApplicantProWrapperRow(row) {
+  const provider = String(row?.provider || "").toLowerCase();
+  const title = String(row?.title || "").trim().toLowerCase();
+  const applyUrl = String(row?.apply_url || "").trim().toLowerCase();
+  return provider === "applicantpro"
+    && title === "jobs"
+    && /\/jobs\/?$/.test(applyUrl);
+}
+
 function mapCachedRowToJob(row) {
+  const repostInfo = buildRepostInfo(row);
   return {
     sourceKey: row.source_key,
     sourceName: row.source_name,
@@ -690,5 +1225,73 @@ function mapCachedRowToJob(row) {
     employmentType: row.employment_type || null,
     compensation: row.compensation || null,
     rawLocationText: row.raw_location_text || null,
+    repostInfo,
+    isPossibleRepost: repostInfo.isPossibleRepost,
   };
+}
+
+function buildRepostInfo(row) {
+  const reappearanceCount = Number(row.reappearance_count || 0);
+  const dateRefreshCount = Number(row.date_refresh_count || 0);
+  const firstSeenAt = Number(row.first_seen_at || 0) || null;
+  const lastSeenAt = Number(row.last_seen_at || 0) || null;
+  const lastReappearedAt = Number(row.last_reappeared_at || 0) || null;
+  const lastDateRefreshAt = Number(row.last_date_refresh_at || 0) || null;
+  const firstPostedAt = normalizeHistoryDate(row.first_posted_at || row.posted_at || row.updated_at);
+  const latestPostedAt = normalizeHistoryDate(row.history_last_posted_at || row.last_posted_at || row.posted_at || row.updated_at);
+  const isPossibleRepost = reappearanceCount > 0 || dateRefreshCount > 0;
+
+  let label = "";
+  if (reappearanceCount > 0 && dateRefreshCount > 0) {
+    label = "POSSIBLE REPOST";
+  } else if (reappearanceCount > 0) {
+    label = "REPOSTED";
+  } else if (dateRefreshCount > 0) {
+    label = "POSSIBLE REPOST";
+  }
+
+  const details = [];
+  if (reappearanceCount > 0) {
+    details.push("Seen before and reappeared");
+  }
+  if (dateRefreshCount > 0) {
+    details.push("Earlier cached sightings suggest this posting was refreshed");
+  }
+
+  return {
+    isPossibleRepost,
+    label,
+    details,
+    reappearanceCount,
+    dateRefreshCount,
+    firstSeenAt,
+    lastSeenAt,
+    lastReappearedAt,
+    lastDateRefreshAt,
+    firstPostedAt,
+    latestPostedAt,
+  };
+}
+
+function normalizeHistoryDate(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const time = Date.parse(normalized);
+  if (Number.isNaN(time)) {
+    return "";
+  }
+
+  return new Date(time).toISOString();
+}
+
+function getHistoryTime(value) {
+  if (!value) {
+    return 0;
+  }
+
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? 0 : time;
 }

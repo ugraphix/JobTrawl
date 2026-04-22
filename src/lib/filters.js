@@ -265,7 +265,102 @@ export function parseDate(value) {
     return null;
   }
 
-  const date = new Date(value);
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const numericDate = new Date(value > 1e12 ? value : value * 1000);
+    return Number.isNaN(numericDate.getTime()) ? null : numericDate;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+
+  const wrappedEpoch = raw.match(/\/Date\((\d{10,13})\)\//i);
+  if (wrappedEpoch?.[1]) {
+    const epoch = Number.parseInt(wrappedEpoch[1], 10);
+    if (Number.isFinite(epoch)) {
+      const wrappedDate = new Date(epoch > 1e12 ? epoch : epoch * 1000);
+      return Number.isNaN(wrappedDate.getTime()) ? null : wrappedDate;
+    }
+  }
+
+  if (/^\d{10,13}$/.test(raw)) {
+    const epoch = Number.parseInt(raw, 10);
+    if (Number.isFinite(epoch)) {
+      const epochDate = new Date(epoch > 1e12 ? epoch : epoch * 1000);
+      return Number.isNaN(epochDate.getTime()) ? null : epochDate;
+    }
+  }
+
+  const normalized = raw
+    .replace(/^[\s,;:.-]+|[\s,;:.-]+$/g, "")
+    .replace(/^(posted|date posted|posted on|published|published on|updated|updated on|created|created on|job posted)\s*[:\-]?\s*/i, "")
+    .trim();
+
+  const lowered = normalized.toLowerCase();
+  const now = new Date();
+  if (lowered === "today") {
+    return now;
+  }
+  if (lowered === "yesterday") {
+    return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  }
+
+  const relative = lowered.match(/^(\d+)\s*(minute|minutes|min|hour|hours|hr|hrs|day|days|week|weeks|month|months)\s*ago$/i);
+  if (relative) {
+    const amount = Number.parseInt(relative[1], 10);
+    const unit = relative[2];
+    if (Number.isFinite(amount) && amount >= 0) {
+      const multipliers = {
+        minute: 60 * 1000,
+        minutes: 60 * 1000,
+        min: 60 * 1000,
+        hour: 60 * 60 * 1000,
+        hours: 60 * 60 * 1000,
+        hr: 60 * 60 * 1000,
+        hrs: 60 * 60 * 1000,
+        day: 24 * 60 * 60 * 1000,
+        days: 24 * 60 * 60 * 1000,
+        week: 7 * 24 * 60 * 60 * 1000,
+        weeks: 7 * 24 * 60 * 60 * 1000,
+        month: 30 * 24 * 60 * 60 * 1000,
+        months: 30 * 24 * 60 * 60 * 1000,
+      };
+      const delta = multipliers[unit];
+      if (delta) {
+        return new Date(now.getTime() - amount * delta);
+      }
+    }
+  }
+
+  const relativeCompact = lowered.match(/^(\d+)\+?\s*(d|w|h|m)\s*ago$/i);
+  if (relativeCompact) {
+    const amount = Number.parseInt(relativeCompact[1], 10);
+    const unit = relativeCompact[2].toLowerCase();
+    if (Number.isFinite(amount) && amount >= 0) {
+      const multipliers = {
+        m: 60 * 1000,
+        h: 60 * 60 * 1000,
+        d: 24 * 60 * 60 * 1000,
+        w: 7 * 24 * 60 * 60 * 1000,
+      };
+      return new Date(now.getTime() - amount * multipliers[unit]);
+    }
+  }
+
+  const relativeDays = lowered.match(/^(\d+)\+?\s*days?\s*ago$/i);
+  if (relativeDays) {
+    const amount = Number.parseInt(relativeDays[1], 10);
+    if (Number.isFinite(amount) && amount >= 0) {
+      return new Date(now.getTime() - amount * 24 * 60 * 60 * 1000);
+    }
+  }
+
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -425,9 +520,22 @@ export function isLikelyJobPosting(job) {
   const title = normalizeText(job?.title);
   const applyUrl = String(job?.applyUrl || "").toLowerCase();
   const provider = String(job?.provider || "").toLowerCase();
+  const description = normalizeText(job?.searchText || job?.descriptionSnippet);
 
   if (!title || title.length < 4) {
     return false;
+  }
+
+  if (provider === "teamtailor") {
+    if (title === "untitled position") {
+      return false;
+    }
+    if (!/\/jobs\/.+/.test(applyUrl)) {
+      return false;
+    }
+    if (!description && !/\/jobs\/.+/.test(applyUrl)) {
+      return false;
+    }
   }
 
   const blockedExactTitles = new Set([
@@ -563,11 +671,44 @@ function hasConcreteRoleTitle(title) {
 }
 
 export function matchesRecency(job, recencyKey) {
-  if (!recencyKey || !RECENCY_WINDOWS[recencyKey] || !job.postedAt) {
+  const normalizedRecencyKey = normalizeRecencyKey(recencyKey);
+  if (!normalizedRecencyKey || !RECENCY_WINDOWS[normalizedRecencyKey]) {
     return true;
   }
 
-  return Date.now() - new Date(job.postedAt).getTime() <= RECENCY_WINDOWS[recencyKey];
+  const candidateDate = job.postedAt || job.updatedAt;
+  if (!candidateDate) {
+    return false;
+  }
+
+  const timestamp = new Date(candidateDate).getTime();
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return false;
+  }
+
+  return Date.now() - timestamp <= RECENCY_WINDOWS[normalizedRecencyKey];
+}
+
+function normalizeRecencyKey(value) {
+  const key = String(value || "").trim().toLowerCase();
+  if (!key) {
+    return "";
+  }
+
+  if (RECENCY_WINDOWS[key]) {
+    return key;
+  }
+
+  const aliases = {
+    "1": "24h",
+    "1d": "24h",
+    "3": "3d",
+    "7": "7d",
+    "14": "14d",
+    "30": "30d",
+  };
+
+  return aliases[key] || "";
 }
 
 export function inferWorkArrangement(text) {
@@ -610,6 +751,120 @@ export function uniqueBy(items, keyFn) {
   }
 
   return output;
+}
+
+export function buildJobContentSignature(job) {
+  const normalizedLocation = normalizeText(
+    [
+      job.locationLabel,
+      job.city,
+      job.region,
+      job.country,
+      job.rawLocationText,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  ) || "unspecified";
+  const normalizedDescription = normalizeText(job.searchText || job.descriptionSnippet || "")
+    .slice(0, 800) || "no-description";
+
+  return [
+    normalizeText(job.company) || "unknown-company",
+    normalizeText(job.title) || "untitled-role",
+    normalizedLocation,
+    normalizeText(job.workArrangement) || "unknown-arrangement",
+    normalizeText(job.team) || "",
+    normalizeText(job.department) || "",
+    normalizedDescription,
+  ].join("|");
+}
+
+export function buildJobDuplicateSignature(job) {
+  const normalizedDescription = normalizeText(job.searchText || job.descriptionSnippet || "")
+    .slice(0, 800) || "no-description";
+
+  return [
+    normalizeText(job.company) || "unknown-company",
+    normalizeText(job.title) || "untitled-role",
+    normalizeText(job.workArrangement) || "unknown-arrangement",
+    normalizeText(job.team) || "",
+    normalizeText(job.department) || "",
+    normalizedDescription,
+  ].join("|");
+}
+
+export function buildJobListingKey(job) {
+  const normalizedCompany = normalizeText(job.company) || "unknown-company";
+  const canonicalJobId = normalizeText(extractCanonicalJobId(job));
+  const normalizedExternalId = normalizeText(job.externalId);
+  const normalizedApplyUrl = String(job.applyUrl || "").trim().toLowerCase().replace(/[?#].*$/, "");
+
+  if (canonicalJobId) {
+    return `${normalizedCompany}|jobid|${canonicalJobId}`;
+  }
+
+  if (normalizedExternalId) {
+    return `${normalizedCompany}|id|${normalizedExternalId}`;
+  }
+
+  if (normalizedApplyUrl) {
+    return `${normalizedCompany}|url|${normalizedApplyUrl}`;
+  }
+
+  return `${normalizedCompany}|signature|${buildJobContentSignature(job)}`;
+}
+
+export function extractCanonicalJobId(job = {}) {
+  const directCandidates = [
+    job.jobId,
+    job.externalId,
+    job.id,
+    extractJobIdFromUrlValue(job.applyUrl),
+    extractJobIdFromUrlValue(job.externalId),
+  ];
+
+  for (const value of directCandidates) {
+    const canonical = canonicalizeJobIdCandidate(value);
+    if (canonical) {
+      return canonical;
+    }
+  }
+
+  return "";
+}
+
+function extractJobIdFromUrlValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const match = raw.match(/\b([A-Z]+-\d+(?:-\d+)?)\b/i);
+  return match?.[1] || "";
+}
+
+function canonicalizeJobIdCandidate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const directMatch = raw.match(/\b([A-Z]+-\d+(?:-\d+)?)\b/i);
+  if (directMatch?.[1]) {
+    return stripVariantSuffix(directMatch[1]);
+  }
+
+  if (/^\d{5,}$/.test(raw)) {
+    return raw;
+  }
+
+  return "";
+}
+
+function stripVariantSuffix(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  const match = normalized.match(/^([A-Z]+-\d+)(?:-\d+)?$/);
+  return match?.[1] || normalized;
 }
 
 export function normalizeWorkArrangement(value) {

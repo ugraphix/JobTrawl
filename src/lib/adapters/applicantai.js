@@ -25,7 +25,7 @@ export async function fetchApplicantAiJobs(source) {
     }
 
     const href = String(headingMatch[1] || "").trim();
-    if (!/\/jobs?\//i.test(href)) {
+    if (!href || /^https?:\/\/(?!applicantai\.com)/i.test(href)) {
       blockMatch = blockPattern.exec(html);
       continue;
     }

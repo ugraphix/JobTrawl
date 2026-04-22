@@ -21,7 +21,7 @@ export async function fetchAshbyJobs(source) {
       country: job.secondaryLocations?.[0]?.address?.addressCountry || null,
       postedAt: job.publishedAt || job.updatedAt,
       applyUrl: job.jobUrl,
-      descriptionSnippet: safeText(job.descriptionPlain || job.descriptionHtml),
+      descriptionSnippet: safeText(job.descriptionPlain || job.descriptionHtml, 3200),
       searchText: cleanText(job.descriptionPlain || job.descriptionHtml),
       employmentType: job.employmentType || null,
       compensation: job.compensation?.summary || null,

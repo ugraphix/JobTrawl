@@ -1,7 +1,7 @@
 import { buildNormalizedJob, fetchJson, safeText } from "./shared.js";
 
 export async function fetchRecruiteeJobs(source) {
-  const subdomain = source.subdomain || source.slug;
+  const subdomain = resolveRecruiteeSubdomain(source);
   if (!subdomain) {
     throw new Error("Recruitee source requires subdomain");
   }
@@ -28,4 +28,27 @@ export async function fetchRecruiteeJobs(source) {
         workArrangement: job.remote ? "remote" : null,
       })
     );
+}
+
+function resolveRecruiteeSubdomain(source) {
+  const explicit = String(source?.subdomain || source?.slug || "").trim().toLowerCase();
+  if (explicit) {
+    return explicit;
+  }
+
+  const careersUrl = String(source?.careersUrl || "").trim();
+  if (!careersUrl) {
+    return "";
+  }
+
+  try {
+    const hostname = new URL(careersUrl).hostname.toLowerCase();
+    if (hostname.endsWith(".recruitee.com")) {
+      return String(hostname.split(".")[0] || "").trim().toLowerCase();
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
 }

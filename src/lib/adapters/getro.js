@@ -22,7 +22,9 @@ export async function fetchGetroJobs(source) {
       let postedAt = null;
       const createdAtRaw = job?.createdAt;
       if (Number.isFinite(Number(createdAtRaw)) && Number(createdAtRaw) > 0) {
-        postedAt = new Date(Number(createdAtRaw)).toISOString();
+        const numericCreatedAt = Number(createdAtRaw);
+        const epochMs = numericCreatedAt < 10_000_000_000 ? numericCreatedAt * 1000 : numericCreatedAt;
+        postedAt = new Date(epochMs).toISOString();
       } else if (typeof createdAtRaw === "string" && createdAtRaw.trim()) {
         postedAt = createdAtRaw.trim();
       }

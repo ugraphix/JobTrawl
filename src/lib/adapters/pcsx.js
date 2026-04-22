@@ -3,7 +3,11 @@ import {
   absoluteUrl,
   buildNormalizedJob,
   cleanText,
+  extractDescriptionFromStructuredPayload,
+  fetchDescriptionFallback,
+  formatDescriptionForDisplay,
   fetchJson,
+  hasUsableDescriptionText,
   mapWithConcurrency,
   safeText,
 } from "./shared.js";
@@ -22,14 +26,31 @@ export async function fetchPcsxJobs(source, filters = {}) {
     return [];
   }
 
-  const detailMap = config.fetchDetails
-    ? await fetchPcsxDetailsMap(config, positions)
+  const shouldFetchKeywordDetails = Boolean(config.query) && positions.length <= config.keywordDetailLimit;
+  const detailMap = (config.fetchDetails || shouldFetchKeywordDetails)
+    ? await fetchPcsxDetailsMap({
+      ...config,
+      detailConcurrency: shouldFetchKeywordDetails
+        ? Math.min(config.detailConcurrency, 2)
+        : config.detailConcurrency,
+    }, positions)
     : new Map();
 
-  return positions.map((position, index) => {
-    const detail = detailMap.get(String(position.id)) || position;
-    return buildNormalizedPcsxJob(source, config, detail, index);
+  const jobs = positions.map((position, index) => {
+    const detail = detailMap.get(String(position.id));
+    const merged = detail && typeof detail === "object"
+      ? {
+        ...position,
+        ...detail,
+        jobDetails: detail?.jobDetails || position?.jobDetails,
+        data: detail?.data || position?.data,
+      }
+      : position;
+    return buildNormalizedPcsxJob(source, config, merged, index);
   });
+
+  await enrichPcsxDescriptions(jobs);
+  return jobs;
 }
 
 function getPcsxConfig(source, filters) {
@@ -37,15 +58,18 @@ function getPcsxConfig(source, filters) {
   const apiBaseUrl = source.apiBaseUrl || baseUrl;
   const domain = source.pcsxDomain || source.domain || DEFAULT_DOMAIN;
   const query = String(filters.keyword || "").trim();
+  const detailBaseUrl = domain === "microsoft.com" ? DEFAULT_BASE_URL : baseUrl;
 
   return {
     baseUrl,
+    detailBaseUrl,
     apiBaseUrl: apiBaseUrl.replace(/\/+$/, ""),
     domain,
     query,
-    fetchDetails: Boolean(source.fetchPcsxDetails),
+    fetchDetails: source.fetchPcsxDetails !== false && !query,
     pageSize: Number(source.pcsxPageSize) || DEFAULT_PAGE_SIZE,
     detailConcurrency: Number(source.pcsxDetailConcurrency) || 4,
+    keywordDetailLimit: Number(source.pcsxKeywordDetailLimit) || (domain === "microsoft.com" ? 250 : 120),
   };
 }
 
@@ -173,8 +197,27 @@ function buildNormalizedPcsxJob(source, config, job, index) {
       ? job.locations
       : [];
   const primaryLocation = locations[0] || job?.location || "Unspecified";
-  const description = job?.jobDescription || null;
-  const applyPath = job?.publicUrl || job?.positionUrl || null;
+  const description = [
+    job?.jobDescription,
+    job?.overview,
+    job?.description,
+    job?.roleDescription,
+    job?.positionDescription,
+    job?.jobContent,
+    job?.descriptionHtml,
+    job?.jobDetails?.jobDescription,
+    job?.jobDetails?.overview,
+    job?.jobDetails?.description,
+    job?.jobDetails?.roleDescription,
+    job?.jobDetails?.positionDescription,
+    job?.jobDetails?.jobContent,
+    job?.data?.jobDescription,
+    job?.data?.overview,
+    job?.data?.description,
+  ].find((value) => typeof value === "string" && value.trim())
+    || extractDescriptionFromStructuredPayload(JSON.stringify(job))
+    || null;
+  const applyPath = buildPcsxApplyPath(config, job);
 
   return buildNormalizedJob(source, {
     id: job?.id || job?.atsJobId || job?.displayJobId || `${source.key}-${index}`,
@@ -187,12 +230,46 @@ function buildNormalizedPcsxJob(source, config, job, index) {
     postedAt: normalizePcsxTimestamp(job?.postedTs),
     updatedAt: normalizePcsxTimestamp(job?.creationTs),
     applyUrl: absoluteUrl(applyPath, config.baseUrl),
-    descriptionSnippet: safeText(description),
+    descriptionSnippet: safeText(formatDescriptionForDisplay(description), 1400),
     searchText: cleanText(description),
     employmentType: job?.efcustomTextEmploymentType || null,
     workArrangement: normalizeWorkArrangement(job?.workLocationOption || job?.efcustomTextWorkSite),
     rawLocationText: locations.join(" | ") || primaryLocation,
   });
+}
+
+function buildPcsxApplyPath(config, job) {
+  const pid = job?.id || job?.atsJobId || null;
+  if (pid) {
+    const url = new URL(`${config.detailBaseUrl || config.baseUrl}/careers`);
+    url.searchParams.set("pid", String(pid));
+    url.searchParams.set("start", "0");
+    url.searchParams.set("sort_by", "timestamp");
+    return url.toString();
+  }
+
+  const fallbackUrl = job?.publicUrl || job?.positionUrl || null;
+  if (!fallbackUrl) {
+    return null;
+  }
+
+  if (String(config.domain || "").toLowerCase() === "microsoft.com") {
+    try {
+      const parsed = new URL(fallbackUrl, config.baseUrl);
+      const positionId = parsed.pathname.match(/\/job\/(\d{8,})\/?$/i)?.[1];
+      if (positionId) {
+        const url = new URL(`${config.detailBaseUrl || DEFAULT_BASE_URL}/careers`);
+        url.searchParams.set("pid", positionId);
+        url.searchParams.set("start", "0");
+        url.searchParams.set("sort_by", "timestamp");
+        return url.toString();
+      }
+    } catch {
+      // Fall through to the original URL if normalization fails.
+    }
+  }
+
+  return fallbackUrl;
 }
 
 function normalizePcsxTimestamp(value) {
@@ -221,4 +298,30 @@ function extractCountryFromLocations(locations) {
   }
 
   return countryLike;
+}
+
+async function enrichPcsxDescriptions(jobs) {
+  const missing = jobs.filter((job) => !hasUsableDescriptionText(job) && job.applyUrl);
+  if (missing.length === 0) {
+    return;
+  }
+
+  const results = await mapWithConcurrency(missing, 3, async (job) => {
+    try {
+      const fallback = await fetchDescriptionFallback(job.applyUrl);
+      return { job, fallback };
+    } catch {
+      return { job, fallback: null };
+    }
+  });
+
+  for (const result of results) {
+    const fallback = result?.fallback;
+    if (!fallback?.descriptionSnippet && !fallback?.searchText) {
+      continue;
+    }
+
+    result.job.descriptionSnippet = fallback.descriptionSnippet || result.job.descriptionSnippet || null;
+    result.job.searchText = fallback.searchText || fallback.descriptionSnippet || result.job.searchText || null;
+  }
 }
