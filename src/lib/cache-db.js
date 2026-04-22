@@ -935,7 +935,7 @@ function getSourceSearchTimeoutMs(source) {
   return DEFAULT_SOURCE_SEARCH_TIMEOUT_MS;
 }
 
-function safeReadCachedJobsForSource(sourceKey) {
+export function safeReadCachedJobsForSource(sourceKey) {
   try {
     return readCachedJobsForSource(sourceKey);
   } catch {

@@ -19,6 +19,7 @@ import {
   initCacheDb,
   loadGeneratedInventorySearchResult,
   loadSourceResultsForSearch,
+  safeReadCachedJobsForSource,
 } from "./lib/cache-db.js";
 import {
   APPLICATION_STATUSES,
@@ -422,7 +423,11 @@ const server = createServer(async (request, response) => {
         });
       }
 
-        const shouldAllowLiveSync = curatedSources.length <= 25 || body.sourceSelectionMode === "custom";
+        const hasSeededCuratedCache = curatedSources.some((source) => safeReadCachedJobsForSource(source.key).length > 0);
+        const shouldAllowLiveSync =
+          curatedSources.length <= 25
+          || body.sourceSelectionMode === "custom"
+          || !hasSeededCuratedCache;
         let completedSources = 0;
         let failedSources = 0;
         let cachedSources = 0;
