@@ -16,9 +16,12 @@ The result is a local search console that can cover both carefully chosen employ
 - Falls back to parsing public employer career pages when there is no clean public API
 - Normalizes results from different systems into one shared job shape
 - Caches fetched jobs locally in SQLite for faster repeat searches
-- Deduplicates and sorts matches across sources
+- Deduplicates the same job across overlapping sources by company + job ID / URL
 - Returns partial results if some sources fail or time out
-- Lets you narrow results by title, date, work arrangement, location, excluded companies, and customized source selection by specific companies or ATS/API provider type
+- Lets you narrow results by title, date, work arrangement, location, excluded companies, specific companies, or ATS/API provider type
+- Preserves jobs with missing posted dates in a separate expandable section instead of inflating strict date-filter counts
+- Flags real reposted jobs when posting history suggests they reappeared or refreshed
+- Includes an application tracker that saves files locally, generates listing PDFs, and syncs a local Excel workbook
 
 ## How it works
 
@@ -33,7 +36,7 @@ At a high level, a search in JobTrawl works like this:
 
 For most users, the important idea is simple: JobTrawl pulls direct listings from many company-controlled sources, standardizes them, and gives you one place to search them.
 
-### Search flow
+### Search and tracker flow
 
 ```mermaid
 flowchart TD
@@ -55,8 +58,8 @@ flowchart TD
 
     M -->|Yes| N["Read jobs from<br/>local cache"]
     M -->|No| O{"Is this a generated<br/>inventory source?"}
-    O -->|Yes| P["Use any existing cached<br/>jobs for that source"]
-    O -->|No| Q["Fetch jobs through<br/>the source adapter"]
+    O -->|Yes| P["Keyword-prefilter generated<br/>inventory and load cached jobs"]
+    O -->|No| Q["Use cached jobs first<br/>and refresh curated sources<br/>in the background when needed"]
 
     Q --> R{"Does the source use<br/>an API or a career page?"}
     R -->|API| S["Call the provider endpoint<br/>and map the response"]
@@ -68,9 +71,16 @@ flowchart TD
     N --> W["Apply the user's<br/>search filters"]
     P --> W
     V --> W
-    W --> X["Remove duplicate<br/>job listings"]
-    X --> Y["Sort by the newest<br/>known date"]
-    Y --> Z["Return results and<br/>source health data"]
+    W --> X["Split unknown-date jobs<br/>into a separate bucket"]
+    X --> Y["Remove duplicate<br/>job listings"]
+    Y --> Z["Sort by the newest<br/>known date"]
+    Z --> AA["Return results and<br/>source health data"]
+
+    AA --> AB["Save a job to the<br/>application tracker"]
+    AB --> AC["Store row data locally<br/>and create/update job folder"]
+    AC --> AD["Upload resume, cover letter,<br/>and listing PDF copies"]
+    AD --> AE["Sync tracker rows into the<br/>local Excel workbook"]
+    AE --> AF["Open workbook export with<br/>file hyperlinks for saved assets"]
 ```
 
 The chart is intentionally simplified so it stays readable in GitHub's Mermaid viewer. The sections below explain the same flow in more detail.
@@ -98,13 +108,42 @@ The UI in `public/index.html` and `public/app.js` supports these filters:
 - Keyword matching can run in strict or loose mode.
 - Loose matching expands many common role aliases. For example, a query like `product manager` can also match nearby role variants defined in `src/lib/filters.js`.
 - Recency uses `postedAt` when available.
+- Strict recency counts only jobs with known dates in the requested window.
+- Jobs with unknown dates can still appear in the expandable `unknown dates` section at the bottom of results.
 - Arrangement filtering normalizes values to `remote`, `hybrid`, `onsite`, or `unknown`.
 - Location filtering is text-based unless the distance filter is active.
 - The distance filter uses browser coordinates plus a built-in location alias map for supported metros.
 - `U.S. jobs only` keeps postings that clearly look U.S.-based and can optionally keep unknown-location jobs in a separate section.
 - Customized search can either filter to an included company list or limit the search to selected ATS/API provider families.
 - Excluded companies are filtered out after normalization.
-- Results are deduplicated by source, company, title, location, and arrangement.
+- Results are deduplicated across overlapping sources, primarily by company plus job ID or normalized apply URL.
+
+## Application tracker
+
+JobTrawl includes a local-first application tracker for jobs you decide to save from the search results.
+
+Tracker features include:
+
+- inline editing for company, title, job ID, job URL, compensation, apply date, and status
+- status pipeline tracking, including applied-role counts in the tracker summary cards
+- file uploads for:
+  - resume provided
+  - cover letter
+  - PDF copy of the job listing
+- local job folders under `data/jobs/`
+- Excel workbook generation at `data/job-applications.xlsx`
+- workbook hyperlinks for:
+  - job listing URL
+  - resume file
+  - cover letter file
+  - saved PDF copy of the listing
+
+### Tracker and workbook behavior
+
+- Tracker rows are saved locally in JSON and synced into the Excel workbook.
+- The tracker page and workbook use the same row ordering: most recently updated first.
+- Listing PDFs try to capture the live job page first, then fall back to a text-based PDF built from saved listing text when sites block automation.
+- Existing PDFs can be regenerated when a row has stale or low-quality listing content.
 
 ## Source strategies
 
@@ -184,6 +223,7 @@ Regardless of where a job comes from, JobTrawl converts it into a shared structu
 After that, JobTrawl:
 
 - applies your filters
+- preserves unknown-date matches separately when a strict recency filter is active
 - counts matches per source
 - removes duplicates
 - sorts results by the newest known date first
@@ -202,6 +242,7 @@ Cache behavior:
 - searches can reuse fresh cached results
 - stale sources can be refreshed
 - generated inventory sources are included by default only after they have been synced locally
+- large generated ATS inventories are keyword-prefiltered before cached postings are loaded
 - expired postings are pruned automatically
 
 There are also API endpoints for cache status and manual sync:
@@ -219,7 +260,7 @@ JobTrawl merges two source files:
 On the current branch, the repo contains:
 
 - about `120` curated sources
-- about `10,186` generated ATS sources
+- `10k+` generated ATS sources
 
 Generated inventory is created from the imported reference database using:
 
@@ -268,6 +309,19 @@ The adapter registry currently includes support for:
 - generic `Career Page` extraction for public employer sites
 
 Coverage quality varies by provider and by company implementation. API-backed adapters are usually the most stable. Career-page extraction is broader but more fragile because employers can change their HTML at any time.
+
+## Saved listing PDFs
+
+When you save a job to the application tracker, JobTrawl tries to keep a readable PDF copy of the listing.
+
+The PDF pipeline:
+
+- first tries a live page capture when the site allows it
+- falls back to structured listing text already gathered during search or save
+- strips common junk like raw JSON dumps, shell page chrome, and repeated duplicate text
+- normalizes weird characters before writing the final PDF
+
+This makes the saved PDFs much more useful for follow-up, interviewing, and comparing the exact role text you originally applied to.
 
 ## Installation
 
