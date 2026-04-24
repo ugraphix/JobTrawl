@@ -129,6 +129,7 @@ async function handleSearch(event) {
     return;
   }
 
+  clearRenderedSearchState();
   const searchRequestId = createSearchRequestId();
   activeSearchRequestId = searchRequestId;
   activeSearchStartedAt = Date.now();
@@ -150,7 +151,8 @@ async function handleSearch(event) {
   }
 
   if (locationMode === "my_location" && !detectedLocation?.coordinates) {
-    stopSearchProgressPolling();
+    stopSearchProgressPolling({ searchRequestId });
+    clearRenderedSearchState();
     setStatus("Location needed");
     resultsCountNode.textContent = "Location permission needed";
     resultsNode.className = "results-list empty-state";
@@ -172,9 +174,13 @@ async function handleSearch(event) {
     });
 
     const payload = await response.json();
-    stopSearchProgressPolling();
+    if (activeSearchRequestId !== searchRequestId) {
+      return;
+    }
+    stopSearchProgressPolling({ searchRequestId });
 
     if (!response.ok) {
+      clearRenderedSearchState();
       setStatus("Error");
       resultsCountNode.textContent = "Search failed";
       resultsNode.className = "results-list empty-state";
@@ -183,10 +189,17 @@ async function handleSearch(event) {
     }
 
     await runFinalLoadingSequence(payload);
+    if (activeSearchRequestId && activeSearchRequestId !== searchRequestId) {
+      return;
+    }
     renderResults(payload, body, locationMode);
     setStatus("Complete");
   } catch (error) {
-    stopSearchProgressPolling();
+    if (activeSearchRequestId !== searchRequestId) {
+      return;
+    }
+    stopSearchProgressPolling({ searchRequestId });
+    clearRenderedSearchState();
     setStatus("Timed out");
     resultsCountNode.textContent = "Search timed out";
     resultsNode.className = "results-list empty-state";
@@ -697,6 +710,16 @@ function persistSearchState(payload, filters, locationMode) {
       locationMode,
       savedAt: new Date().toISOString(),
     }));
+  } catch {
+    // Ignore storage failures and keep the live page usable.
+  }
+}
+
+function clearRenderedSearchState() {
+  latestRenderedSearchState = null;
+  renderedJobsByKey = new Map();
+  try {
+    sessionStorage.removeItem(SEARCH_STATE_STORAGE_KEY);
   } catch {
     // Ignore storage failures and keep the live page usable.
   }
@@ -1408,6 +1431,9 @@ function startSearchProgressPolling(searchRequestId) {
 }
 
 function stopSearchProgressPolling(options = {}) {
+  if (options.searchRequestId && activeSearchRequestId && options.searchRequestId !== activeSearchRequestId) {
+    return;
+  }
   if (activeSearchProgressTimer) {
     window.clearInterval(activeSearchProgressTimer);
     activeSearchProgressTimer = null;
