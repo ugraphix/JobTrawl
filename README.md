@@ -2,18 +2,18 @@
 
 JobTrawl is a local-first job search app that aggregates direct job listings from employer career pages and ATS job boards into one searchable interface. Instead of relying on job aggregators like LinkedIn or Indeed, it pulls openings from company-controlled sources, normalizes the results into a shared format, caches them locally, and lets you filter the combined list in one place.
 
-## Preview
-
-![JobTrawl new features](docs/JobTrawl_NewFeatures.png)
-
-![JobTrawl application tracker](docs/JobTrawl_ApplicationTracker.png)
-
 It is designed for two kinds of coverage:
 
 - Curated sources you hand-pick in `config/sources.json`
 - Large generated ATS inventories imported into `config/generated-ats-sources.json`
 
 The result is a local search console that can cover both carefully chosen employers and much broader ATS ecosystems.
+
+## Preview
+
+![JobTrawl new features](docs/JobTrawl_NewFeatures.png)
+
+![JobTrawl application tracker](docs/JobTrawl_ApplicationTracker.png)
 
 ## What JobTrawl does
 
