@@ -3,11 +3,33 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { loadSourceConfig } from "../src/lib/config.js";
-import { getCacheDbPath } from "../src/lib/cache-db.js";
+import { ensureSourcesCached, getCacheDbPath } from "../src/lib/cache-db.js";
 import { expandKeywordQueriesForSearch } from "../src/lib/filters.js";
 
 const REPORT_PATH = path.join(process.cwd(), "data", "cache-warm-report.json");
+const PROGRESS_PATH = path.join(process.cwd(), "data", "cache-warm-progress.json");
 const RECENT_CACHE_WINDOW_MS = 6 * 60 * 60 * 1000;
+const MAX_LIVE_RETRIES = 2;
+const DEFAULT_LIVE_CONCURRENCY = 3;
+const DEFAULT_LIVE_TIMEOUT_MS = 15_000;
+const PROVIDER_SETTINGS = {
+  applicantpro: { concurrency: 4, timeoutMs: 15_000 },
+  applytojob: { concurrency: 4, timeoutMs: 15_000 },
+  ashby: { concurrency: 8, timeoutMs: 10_000 },
+  bamboohr: { concurrency: 5, timeoutMs: 10_000 },
+  breezy: { concurrency: 3, timeoutMs: 15_000 },
+  greenhouse: { concurrency: 8, timeoutMs: 10_000 },
+  hrmdirect: { concurrency: 4, timeoutMs: 15_000 },
+  icims: { concurrency: 2, timeoutMs: 20_000 },
+  jobvite: { concurrency: 3, timeoutMs: 15_000 },
+  join: { concurrency: 2, timeoutMs: 15_000 },
+  lever: { concurrency: 8, timeoutMs: 10_000 },
+  manatal: { concurrency: 2, timeoutMs: 20_000 },
+  recruitee: { concurrency: 4, timeoutMs: 15_000 },
+  teamtailor: { concurrency: 3, timeoutMs: 15_000 },
+  workday: { concurrency: 2, timeoutMs: 20_000 },
+  zoho: { concurrency: 3, timeoutMs: 15_000 },
+};
 
 main().catch((error) => {
   console.error(error);
@@ -16,13 +38,44 @@ main().catch((error) => {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const allSources = dedupeSources(await loadSourceConfig());
+  const beforeSnapshot = readCacheSnapshot();
+  const selectedSources = selectSources(allSources, beforeSnapshot, options);
+
   if (!options.reportOnly) {
-    throw new Error("Only --report-only mode is implemented in this phase.");
+    validateLiveWarmOptions(options);
   }
 
-  const allSources = dedupeSources(await loadSourceConfig());
-  const cacheSnapshot = readCacheSnapshot();
-  const selectedSources = selectSources(allSources, cacheSnapshot, options);
+  const liveSummary = options.reportOnly
+    ? null
+    : await runLiveWarm(selectedSources, beforeSnapshot, options);
+  const cacheSnapshot = options.reportOnly ? beforeSnapshot : readCacheSnapshot();
+  const report = buildReport({
+    allSources,
+    selectedSources,
+    cacheSnapshot,
+    options,
+    beforeSnapshot,
+    liveSummary,
+  });
+
+  await mkdir(path.dirname(REPORT_PATH), { recursive: true });
+  await writeFile(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+  console.log(JSON.stringify({
+    reportOnly: options.reportOnly,
+    reportPath: report.reportPath,
+    progressPath: liveSummary ? path.relative(process.cwd(), PROGRESS_PATH) : null,
+    totals: report.totals,
+    selectedSourcesByProvider: report.selectedSourcesByProvider,
+    cacheCoverageByProvider: report.cacheCoverageByProvider,
+    liveSummary: liveSummary ? summarizeLiveForConsole(liveSummary) : null,
+    keywordPrioritySources: report.keywordPrioritySources.slice(0, 10),
+    estimatedWarmOrder: report.estimatedWarmOrder.slice(0, 10),
+  }, null, 2));
+}
+
+function buildReport({ allSources, selectedSources, cacheSnapshot, options, beforeSnapshot = cacheSnapshot, liveSummary = null }) {
   const selectedKeys = new Set(selectedSources.map((source) => source.key));
   const selectedCacheRows = cacheSnapshot.sources.filter((row) => selectedKeys.has(row.sourceKey));
   const selectedCachedKeys = new Set(selectedCacheRows.filter((row) => row.cachedJobs > 0).map((row) => row.sourceKey));
@@ -54,9 +107,10 @@ async function main() {
     .sort(compareWarmOrder)
     .slice(0, options.limit || selectedSources.length);
 
-  const report = {
-    mode: "report-only",
+  return {
+    mode: options.reportOnly ? "report-only" : "live",
     reportPath: path.relative(process.cwd(), REPORT_PATH),
+    progressPath: liveSummary ? path.relative(process.cwd(), PROGRESS_PATH) : null,
     options,
     cacheDbPath: getCacheDbPath(),
     totals: {
@@ -67,6 +121,10 @@ async function main() {
       uncachedSourcesSelected: selectedSources.filter((source) => !selectedCachedKeys.has(source.key)).length,
       cachedJobsSelected: selectedCacheRows.reduce((sum, row) => sum + Number(row.cachedJobs || 0), 0),
     },
+    liveSummary,
+    beforeAfterCacheCoverageByProvider: liveSummary
+      ? buildBeforeAfterCoverageByProvider(selectedSources, beforeSnapshot, cacheSnapshot)
+      : null,
     selectedSourcesByProvider: countSourcesByProvider(selectedSources),
     cacheCoverageByProvider: buildCoverageByProvider(selectedSources, cacheSnapshot),
     recentlyCachedByProvider: countSourcesByProvider(
@@ -78,19 +136,6 @@ async function main() {
     keywordPrioritySources: priorityKeys.slice(0, 25),
     estimatedWarmOrder: estimatedWarmOrder.slice(0, 100),
   };
-
-  await mkdir(path.dirname(REPORT_PATH), { recursive: true });
-  await writeFile(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-
-  console.log(JSON.stringify({
-    reportOnly: true,
-    reportPath: report.reportPath,
-    totals: report.totals,
-    selectedSourcesByProvider: report.selectedSourcesByProvider,
-    cacheCoverageByProvider: report.cacheCoverageByProvider,
-    keywordPrioritySources: report.keywordPrioritySources.slice(0, 10),
-    estimatedWarmOrder: report.estimatedWarmOrder.slice(0, 10),
-  }, null, 2));
 }
 
 function parseArgs(argv) {
@@ -101,6 +146,8 @@ function parseArgs(argv) {
     keyword: "",
     resume: false,
     force: false,
+    all: false,
+    strategy: "uncached",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -128,11 +175,141 @@ function parseArgs(argv) {
       options.resume = true;
     } else if (arg === "--force") {
       options.force = true;
+    } else if (arg === "--all") {
+      options.all = true;
+    } else if (arg === "--strategy") {
+      options.strategy = normalizeStrategy(argv[index + 1]);
+      index += 1;
+    } else if (arg.startsWith("--strategy=")) {
+      options.strategy = normalizeStrategy(arg.split("=").slice(1).join("="));
     }
   }
 
   options.providers = [...new Set(options.providers)];
   return options;
+}
+
+function validateLiveWarmOptions(options) {
+  if (!options.all && options.providers.length === 0) {
+    throw new Error("Live warming requires --provider <provider> or --all. Use --report-only for a dry run.");
+  }
+  if (!options.all && options.limit <= 0) {
+    throw new Error("Provider-limited live warming requires --limit <n> in this phase.");
+  }
+  if (options.all && options.limit <= 0) {
+    throw new Error("Full 32k-source live warming is not enabled in this phase. Add --limit for a bounded live run.");
+  }
+}
+
+async function runLiveWarm(selectedSources, beforeSnapshot, options) {
+  const startedAt = Date.now();
+  const selectedBeforeRows = new Set(selectedSources.map((source) => source.key));
+  const beforeSelectedCacheRows = beforeSnapshot.sources.filter((row) => selectedBeforeRows.has(row.sourceKey));
+  const beforeCachedSelectedSources = beforeSelectedCacheRows.filter((row) => row.cachedJobs > 0).length;
+  const beforeCachedTotalSources = beforeSnapshot.sources.filter((row) => row.cachedJobs > 0).length;
+  const state = {
+    startedAt,
+    updatedAt: startedAt,
+    selectedSources: selectedSources.length,
+    completedSources: 0,
+    sourcesWarmed: 0,
+    parsedJobsAdded: 0,
+    classifications: initClassificationCounts(),
+    results: [],
+  };
+
+  await mkdir(path.dirname(PROGRESS_PATH), { recursive: true });
+  await writeProgress(state);
+
+  const groups = groupSourcesByProvider(selectedSources);
+  for (const [provider, sources] of groups) {
+    const settings = getProviderSettings(provider);
+    await runWithConcurrency(sources, settings.concurrency, async (source) => {
+      const result = await warmSingleSource(source, settings, options);
+      state.completedSources += 1;
+      state.sourcesWarmed += result.synced ? 1 : 0;
+      state.classifications[result.classification] = (state.classifications[result.classification] || 0) + 1;
+      state.results.push(result);
+      state.updatedAt = Date.now();
+      await writeProgress(state);
+    });
+  }
+
+  const afterSnapshot = readCacheSnapshot();
+  const afterRowsBySource = afterSnapshot.bySourceKey;
+  let parsedJobsAdded = 0;
+  for (const source of selectedSources) {
+    const beforeJobs = Number(beforeSnapshot.bySourceKey.get(source.key)?.cachedJobs || 0);
+    const afterJobs = Number(afterRowsBySource.get(source.key)?.cachedJobs || 0);
+    if (afterJobs > beforeJobs) {
+      parsedJobsAdded += afterJobs - beforeJobs;
+    }
+  }
+  state.parsedJobsAdded = parsedJobsAdded;
+  state.elapsedMs = Date.now() - startedAt;
+  state.afterCachedSelectedSources = selectedSources
+    .filter((source) => Number(afterRowsBySource.get(source.key)?.cachedJobs || 0) > 0)
+    .length;
+  state.beforeCachedSelectedSources = beforeCachedSelectedSources;
+  state.beforeCachedTotalSources = beforeCachedTotalSources;
+  state.afterCachedTotalSources = afterSnapshot.sources.filter((row) => row.cachedJobs > 0).length;
+  state.updatedAt = Date.now();
+  await writeProgress(state);
+  return state;
+}
+
+async function warmSingleSource(source, settings, options) {
+  let lastError = null;
+  const attempts = [];
+  for (let attempt = 0; attempt <= MAX_LIVE_RETRIES; attempt += 1) {
+    const startedAt = Date.now();
+    const result = await ensureSourcesCached([source], {}, {
+      forceSync: options.force,
+      concurrency: 1,
+      timeoutMs: settings.timeoutMs,
+    });
+    const error = result.errors?.[0]?.error || null;
+    attempts.push({
+      attempt: attempt + 1,
+      elapsedMs: Date.now() - startedAt,
+      syncedSources: Number(result.syncedSources || 0),
+      failedSources: Number(result.failedSources || 0),
+      error,
+    });
+
+    if (!error && Number(result.failedSources || 0) === 0) {
+      const row = readCacheSnapshot().bySourceKey.get(source.key);
+      return {
+        sourceKey: source.key,
+        provider: normalizeProvider(source.provider),
+        company: source.company || source.name || "",
+        synced: Number(result.syncedSources || 0) > 0,
+        classification: Number(row?.cachedJobs || 0) > 0 ? "active_with_jobs" : "valid_empty",
+        cachedJobs: Number(row?.cachedJobs || 0),
+        lastJobCount: Number(row?.lastJobCount || 0),
+        attempts,
+      };
+    }
+
+    lastError = error || "Unknown cache warming failure";
+    if (!shouldRetryError(lastError) || attempt >= MAX_LIVE_RETRIES) {
+      break;
+    }
+    await sleep(getRetryDelayMs(attempt));
+  }
+
+  const row = readCacheSnapshot().bySourceKey.get(source.key);
+  return {
+    sourceKey: source.key,
+    provider: normalizeProvider(source.provider),
+    company: source.company || source.name || "",
+    synced: false,
+    classification: classifyError(lastError, row),
+    cachedJobs: Number(row?.cachedJobs || 0),
+    lastJobCount: Number(row?.lastJobCount || 0),
+    error: lastError,
+    attempts,
+  };
 }
 
 function dedupeSources(sources) {
@@ -152,8 +329,57 @@ function selectSources(sources, cacheSnapshot, options) {
   const filtered = providerSet.size > 0
     ? sources.filter((source) => providerSet.has(normalizeProvider(source.provider)))
     : sources;
+  if (options.strategy === "stratified") {
+    return selectStratifiedSources(filtered, options.limit);
+  }
+  if (options.strategy === "active-history") {
+    return selectActiveHistorySources(filtered, cacheSnapshot, options.limit);
+  }
   const ranked = rankSelectedSources(filtered, cacheSnapshot, options.keyword);
   return options.limit > 0 ? ranked.slice(0, options.limit) : ranked;
+}
+
+function selectStratifiedSources(sources, limit) {
+  const sorted = [...sources].sort(compareSourceIdentity);
+  if (limit <= 0 || sorted.length <= limit) {
+    return sorted;
+  }
+  if (limit === 1) {
+    return [sorted[0]];
+  }
+
+  const selected = [];
+  const seen = new Set();
+  const step = (sorted.length - 1) / (limit - 1);
+  for (let index = 0; index < limit; index += 1) {
+    const source = sorted[Math.round(index * step)];
+    if (source && !seen.has(source.key)) {
+      selected.push(source);
+      seen.add(source.key);
+    }
+  }
+
+  for (const source of sorted) {
+    if (selected.length >= limit) {
+      break;
+    }
+    if (!seen.has(source.key)) {
+      selected.push(source);
+      seen.add(source.key);
+    }
+  }
+  return selected;
+}
+
+function selectActiveHistorySources(sources, cacheSnapshot, limit) {
+  const ranked = [...sources].sort((left, right) => {
+    const leftCache = cacheSnapshot.bySourceKey.get(left.key);
+    const rightCache = cacheSnapshot.bySourceKey.get(right.key);
+    const leftJobs = Number(leftCache?.cachedJobs || leftCache?.lastJobCount || 0);
+    const rightJobs = Number(rightCache?.cachedJobs || rightCache?.lastJobCount || 0);
+    return rightJobs - leftJobs || compareSourceIdentity(left, right);
+  });
+  return limit > 0 ? ranked.slice(0, limit) : ranked;
 }
 
 function rankSelectedSources(sources, cacheSnapshot, keyword) {
@@ -313,6 +539,36 @@ function buildCoverageByProvider(sources, cacheSnapshot) {
   return Object.fromEntries([...grouped.entries()].sort(([left], [right]) => left.localeCompare(right)));
 }
 
+function buildBeforeAfterCoverageByProvider(sources, beforeSnapshot, afterSnapshot) {
+  const providers = new Set(sources.map((source) => normalizeProvider(source.provider) || "unknown"));
+  const before = buildCoverageByProvider(sources, beforeSnapshot);
+  const after = buildCoverageByProvider(sources, afterSnapshot);
+  const rows = {};
+  for (const provider of [...providers].sort()) {
+    rows[provider] = {
+      before: before[provider] || emptyCoverageRow(),
+      after: after[provider] || emptyCoverageRow(),
+      delta: {
+        cachedSources: Number(after[provider]?.cachedSources || 0) - Number(before[provider]?.cachedSources || 0),
+        cachedJobs: Number(after[provider]?.cachedJobs || 0) - Number(before[provider]?.cachedJobs || 0),
+        errorSources: Number(after[provider]?.errorSources || 0) - Number(before[provider]?.errorSources || 0),
+      },
+    };
+  }
+  return rows;
+}
+
+function emptyCoverageRow() {
+  return {
+    configuredSources: 0,
+    cachedSources: 0,
+    recentlyCachedSources: 0,
+    uncachedSources: 0,
+    cachedJobs: 0,
+    errorSources: 0,
+  };
+}
+
 function countSourcesByProvider(sources) {
   const counts = new Map();
   for (const source of sources) {
@@ -329,8 +585,20 @@ function compareWarmOrder(left, right) {
     || String(left.sourceKey || "").localeCompare(String(right.sourceKey || ""));
 }
 
+function compareSourceIdentity(left, right) {
+  return String(left.provider || "").localeCompare(String(right.provider || ""))
+    || String(left.key || "").localeCompare(String(right.key || ""));
+}
+
 function normalizeProvider(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function normalizeStrategy(value) {
+  const strategy = String(value || "").trim().toLowerCase();
+  return ["uncached", "stratified", "keyword-priority", "active-history"].includes(strategy)
+    ? strategy
+    : "uncached";
 }
 
 function toPositiveInt(value) {
@@ -340,4 +608,106 @@ function toPositiveInt(value) {
 
 function maxDateString(left, right) {
   return String(right || "").localeCompare(String(left || "")) > 0 ? right : left;
+}
+
+function initClassificationCounts() {
+  return {
+    active_with_jobs: 0,
+    valid_empty: 0,
+    invalid_endpoint: 0,
+    parser_gap: 0,
+    blocked: 0,
+    rate_limited: 0,
+    timeout: 0,
+    failed: 0,
+  };
+}
+
+function groupSourcesByProvider(sources) {
+  const groups = new Map();
+  for (const source of sources) {
+    const provider = normalizeProvider(source.provider) || "unknown";
+    if (!groups.has(provider)) {
+      groups.set(provider, []);
+    }
+    groups.get(provider).push(source);
+  }
+  return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+}
+
+function getProviderSettings(provider) {
+  return PROVIDER_SETTINGS[normalizeProvider(provider)] || {
+    concurrency: DEFAULT_LIVE_CONCURRENCY,
+    timeoutMs: DEFAULT_LIVE_TIMEOUT_MS,
+  };
+}
+
+async function runWithConcurrency(items, concurrency, worker) {
+  const normalizedConcurrency = Math.max(1, Number(concurrency) || 1);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(normalizedConcurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+}
+
+async function writeProgress(state) {
+  await writeFile(PROGRESS_PATH, `${JSON.stringify({
+    ...state,
+    startedAt: new Date(state.startedAt).toISOString(),
+    updatedAt: new Date(state.updatedAt).toISOString(),
+    results: state.results.slice(-100),
+  }, null, 2)}\n`, "utf8");
+}
+
+function shouldRetryError(error) {
+  const text = String(error || "");
+  if (/\b(?:400|401|403|404)\b|invalid url|malformed|not found/i.test(text)) {
+    return false;
+  }
+  return /\b(?:408|429|502|503|504)\b|ECONNRESET|ETIMEDOUT|timeout|timed out|network reset|fetch failed|socket hang up/i.test(text);
+}
+
+function classifyError(error, cacheRow) {
+  if (cacheRow && Number(cacheRow.cachedJobs || 0) > 0) {
+    return "active_with_jobs";
+  }
+  const text = String(error || cacheRow?.lastError || "");
+  if (/\b429\b|rate.?limit/i.test(text)) return "rate_limited";
+  if (/\b408\b|timeout|timed out|ETIMEDOUT|AbortError/i.test(text)) return "timeout";
+  if (/\b403\b|blocked|forbidden|captcha|cloudflare/i.test(text)) return "blocked";
+  if (/\b(?:400|401|404)\b|invalid endpoint|invalid url|malformed|not found|ENOTFOUND/i.test(text)) {
+    return "invalid_endpoint";
+  }
+  if (/parser|parse|unexpected token|job markers|shell|selector|structure/i.test(text)) {
+    return "parser_gap";
+  }
+  return "failed";
+}
+
+function getRetryDelayMs(attempt) {
+  return 1_000 * (attempt + 1);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function summarizeLiveForConsole(liveSummary) {
+  return {
+    selectedSources: liveSummary.selectedSources,
+    completedSources: liveSummary.completedSources,
+    sourcesWarmed: liveSummary.sourcesWarmed,
+    parsedJobsAdded: liveSummary.parsedJobsAdded,
+    beforeCachedSelectedSources: liveSummary.beforeCachedSelectedSources,
+    afterCachedSelectedSources: liveSummary.afterCachedSelectedSources,
+    beforeCachedTotalSources: liveSummary.beforeCachedTotalSources,
+    afterCachedTotalSources: liveSummary.afterCachedTotalSources,
+    classifications: liveSummary.classifications,
+    elapsedMs: liveSummary.elapsedMs,
+  };
 }
