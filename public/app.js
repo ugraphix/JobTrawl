@@ -65,6 +65,7 @@ enableSourceCustomizationNode.addEventListener("change", syncSourceCustomization
 sourceCustomizationModeInputs.forEach((input) => input.addEventListener("change", syncSourceCustomizationUI));
 groupActionButtons.forEach((button) => button.addEventListener("click", handleGroupAction));
 locationModeInputs.forEach((input) => input.addEventListener("change", handleLocationModeChange));
+usOnlyNode?.addEventListener("change", handleUsOnlyChange);
 excludedCompaniesNode.addEventListener("change", updateDropdownCounts);
 excludedCompaniesSearchNode?.addEventListener("input", handleExcludedCompaniesSearch);
 includedCompaniesNode?.addEventListener("change", updateDropdownCounts);
@@ -208,11 +209,25 @@ async function handleSearch(event) {
 }
 
 async function handleLocationModeChange() {
+  if (getLocationMode()) {
+    usOnlyNode.checked = false;
+  }
+
   syncLocationModeUI();
 
   if (getLocationMode() === "my_location" && !detectedLocation && !geolocationRequested) {
     await requestBrowserLocation();
   }
+}
+
+function handleUsOnlyChange() {
+  if (usOnlyNode?.checked) {
+    locationModeInputs.forEach((input) => {
+      input.checked = false;
+    });
+  }
+
+  syncLocationModeUI();
 }
 
 async function requestBrowserLocation() {
@@ -421,6 +436,7 @@ function buildSearchPayload(locationMode = getLocationMode(), locationGroups = c
     recency: form.recency.value,
     arrangements: getCheckedValues(arrangementsNode),
     usOnly: Boolean(usOnlyNode?.checked),
+    locationMode,
     locationGroups,
     distanceMiles: locationMode === "my_location" ? form.distanceMiles.value : "",
     userCoordinates: locationMode === "my_location" && detectedLocation?.coordinates ? detectedLocation.coordinates : null,
