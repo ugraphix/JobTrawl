@@ -1,7 +1,16 @@
 import path from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { fetchJobsForSource } from "./adapters/index.js";
+import {
+  deriveEmployerCompany,
+  deriveLocationMetadata,
+  extractApplicationDeadlineFromText,
+  extractPostedDateFromHtml,
+  isGenericLocationLabel,
+  normalizeDescriptionFetchUrl,
+} from "./adapters/shared.js";
+import { expandKeywordQueriesForSearch, inferWorkArrangement, RECENCY_WINDOWS } from "./filters.js";
 
 const CACHE_DIR = path.join(process.cwd(), "data");
 const CACHE_DB_PATH = path.join(CACHE_DIR, "jobs-cache.sqlite");
@@ -15,6 +24,10 @@ const DEFAULT_SOURCE_SEARCH_TIMEOUT_MS = Math.max(1000, Number(process.env.CACHE
 const DEFAULT_SOURCE_SYNC_TIMEOUT_MS = Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, Number(process.env.CACHE_SOURCE_SYNC_TIMEOUT_MS || 15000));
 const DEFAULT_SEARCH_MAX_DURATION_MS = Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, Number(process.env.CACHE_SEARCH_MAX_DURATION_MS || 30000));
 const GENERATED_INVENTORY_WARM_BATCH_SIZE = Math.max(1, Number(process.env.GENERATED_INVENTORY_WARM_BATCH_SIZE || 60));
+const REPOST_POSTED_GAP_MS = 24 * 60 * 60 * 1000;
+const BULK_CACHE_ALL_SOURCES_THRESHOLD = 1000;
+const BULK_UNKNOWN_DATE_LIMIT = 250;
+const BULK_DATED_RESULT_LIMIT = Math.max(500, Number(process.env.BULK_DATED_RESULT_LIMIT || 4000));
 
 let database = null;
 let cacheBackend = "sqlite";
@@ -199,13 +212,23 @@ export async function ensureSourcesCached(sources, filters = {}, options = {}) {
   pruneExpiredCache();
 
   const staleSources = options.forceSync ? sources : sources.filter((source) => isSourceStale(source.key));
+  const concurrency = Number(options.concurrency) > 0
+    ? Number(options.concurrency)
+    : DEFAULT_SYNC_CONCURRENCY;
+  const timeoutMs = Number(options.timeoutMs) > 0
+    ? Number(options.timeoutMs)
+    : null;
   let syncedSources = 0;
   let failedSources = 0;
   const errors = [];
 
-  await runWithConcurrency(staleSources, DEFAULT_SYNC_CONCURRENCY, async (source) => {
+  await runWithConcurrency(staleSources, concurrency, async (source) => {
     try {
-      await syncSourceToCache(source, filters, { timeoutMs: DEFAULT_SOURCE_SYNC_TIMEOUT_MS });
+      await syncSourceToCache(source, filters, {
+        timeoutMs: timeoutMs
+          ? Math.max(timeoutMs, getSourceSearchTimeoutMs(source))
+          : Math.max(DEFAULT_SOURCE_SYNC_TIMEOUT_MS, getSourceSearchTimeoutMs(source)),
+      });
       syncedSources += 1;
     } catch (error) {
       failedSources += 1;
@@ -248,6 +271,48 @@ export async function loadSourceResultsForSearch(sources, filters = {}, options 
   });
 
   return results;
+}
+
+export function loadCachedSourceResultsForSearch(sources, filters = {}, options = {}) {
+  initCacheDb();
+  pruneExpiredCache();
+
+  const normalizedSources = Array.isArray(sources) ? sources : [];
+  if (normalizedSources.length === 0) {
+    return [];
+  }
+
+  const jobs = readCachedJobsForSourceKeys(
+    normalizedSources.map((source) => source.key),
+    filters
+  );
+  const jobsBySourceKey = new Map();
+
+  for (const job of jobs) {
+    const sourceKey = String(job?.sourceKey || "").trim();
+    if (!sourceKey) {
+      continue;
+    }
+    if (!jobsBySourceKey.has(sourceKey)) {
+      jobsBySourceKey.set(sourceKey, []);
+    }
+    jobsBySourceKey.get(sourceKey).push(job);
+  }
+
+  const includeEmptySources = options.includeEmptySources !== false;
+  const sourceList = includeEmptySources
+    ? normalizedSources
+    : normalizedSources.filter((source) => jobsBySourceKey.has(source.key));
+
+  return sourceList.map((source) => ({
+    source,
+    jobs: jobsBySourceKey.get(source.key) || [],
+    error: null,
+    progressMeta: {
+      mode: "cache_only",
+      jobs: (jobsBySourceKey.get(source.key) || []).length,
+    },
+  }));
 }
 
 export function loadGeneratedInventorySearchResult(sources, filters = {}) {
@@ -513,8 +578,8 @@ function replaceSourceJobs(db, source, jobs, now) {
       region: job.region || null,
       country: job.country || null,
       work_arrangement: job.workArrangement || null,
-      posted_at: job.postedAt || null,
-      updated_at: job.updatedAt || null,
+      posted_at: job.postedDate || job.postedAt || null,
+      updated_at: job.updatedDate || job.updatedAt || null,
       date_status: job.dateStatus || null,
       apply_url: job.applyUrl,
       description_snippet: job.descriptionSnippet || null,
@@ -561,8 +626,8 @@ function replaceSourceJobs(db, source, jobs, now) {
         job.region || null,
         job.country || null,
         job.workArrangement || null,
-        job.postedAt || null,
-        job.updatedAt || null,
+        job.postedDate || job.postedAt || null,
+        job.updatedDate || job.updatedAt || null,
         job.dateStatus || null,
         job.applyUrl,
         job.descriptionSnippet || null,
@@ -710,12 +775,7 @@ function updateSqlitePostingHistory(db, source, jobs, now, previousExternalIds) 
     const firstSeenAt = Number(existing?.first_seen_at || now);
     const wasMissing = Number(existing?.missing_since || 0) > 0;
     const previousPostedAt = normalizeHistoryDate(existing?.last_posted_at || existing?.first_posted_at);
-    const dateRefreshed = Boolean(
-      previousPostedAt
-      && currentPostedAt
-      && currentPostedAt !== previousPostedAt
-      && getHistoryTime(currentPostedAt) > getHistoryTime(previousPostedAt)
-    );
+    const dateRefreshed = hasMeaningfulPostedDateRefresh(previousPostedAt, currentPostedAt);
 
     upsertStatement.run(
       source.key,
@@ -760,12 +820,7 @@ function updateJsonPostingHistory(source, jobs, now, previousExternalIds) {
     const currentPostedAt = normalizeHistoryDate(job.postedAt || job.updatedAt);
     const previousPostedAt = normalizeHistoryDate(existing.last_posted_at || existing.first_posted_at);
     const wasMissing = Number(existing.missing_since || 0) > 0;
-    const dateRefreshed = Boolean(
-      previousPostedAt
-      && currentPostedAt
-      && currentPostedAt !== previousPostedAt
-      && getHistoryTime(currentPostedAt) > getHistoryTime(previousPostedAt)
-    );
+    const dateRefreshed = hasMeaningfulPostedDateRefresh(previousPostedAt, currentPostedAt);
 
     sourceHistory[externalId] = {
       source_key: source.key,
@@ -798,7 +853,6 @@ function safeIsSourceFresh(sourceKey) {
 
 function readCachedJobsForSource(sourceKey) {
   initCacheDb();
-  const jsonRows = readJsonCachedRowsForSourceKeys([sourceKey]);
 
   if (cacheBackend === "sqlite") {
     try {
@@ -818,16 +872,17 @@ function readCachedJobsForSource(sourceKey) {
         LEFT JOIN posting_history AS history
           ON history.source_key = postings.source_key
          AND history.external_id = postings.external_id
-        WHERE postings.source_key = ?
-          AND expires_at > ?
-        ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
-      `).all(sourceKey, Date.now());
-      return mergeCachedJobRows(rows, jsonRows).map(mapCachedRowToJob);
-    } catch (error) {
-      recoverToJsonCache(error);
+          WHERE postings.source_key = ?
+            AND expires_at > ?
+          ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+        `).all(sourceKey, Date.now());
+        return rows.map(mapCachedRowToJob);
+      } catch (error) {
+        recoverToJsonCache(error);
+      }
     }
-  }
 
+  const jsonRows = readJsonCachedRowsForSourceKeys([sourceKey]);
   return jsonRows.map(mapCachedRowToJob);
 }
 
@@ -844,18 +899,68 @@ function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
   }
 
   const keywordPrefilter = buildGeneratedInventoryKeywordPrefilter(filters);
-  const jsonRows = readJsonCachedRowsForSourceKeys(normalizedKeys, keywordPrefilter);
+  const recencyPrefilter = buildCachedRecencyPrefilter(filters);
 
   if (cacheBackend === "sqlite") {
     try {
-      const allRows = [];
-      const chunkSize = 400;
-      for (let index = 0; index < normalizedKeys.length; index += chunkSize) {
-        const chunk = normalizedKeys.slice(index, index + chunkSize);
-        const placeholders = chunk.map(() => "?").join(", ");
-        const textExpression = "LOWER(COALESCE(postings.title, '') || ' ' || COALESCE(postings.search_text, '') || ' ' || COALESCE(postings.description_snippet, ''))";
+      if (normalizedKeys.length >= BULK_CACHE_ALL_SOURCES_THRESHOLD) {
+        if (recencyPrefilter) {
+          const datedStatement = database.prepare(`
+            SELECT
+              postings.*,
+              history.first_seen_at,
+              history.last_seen_at,
+              history.missing_since,
+              history.first_posted_at,
+              history.last_posted_at AS history_last_posted_at,
+              history.last_reappeared_at,
+              history.reappearance_count,
+              history.last_date_refresh_at,
+              history.date_refresh_count
+            FROM cached_postings AS postings
+            LEFT JOIN posting_history AS history
+              ON history.source_key = postings.source_key
+             AND history.external_id = postings.external_id
+            WHERE expires_at > ?
+              AND COALESCE(postings.posted_at, postings.updated_at) >= ?
+            ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+            LIMIT ${BULK_DATED_RESULT_LIMIT}
+          `);
+          const unknownStatement = database.prepare(`
+            SELECT
+              postings.*,
+              history.first_seen_at,
+              history.last_seen_at,
+              history.missing_since,
+              history.first_posted_at,
+              history.last_posted_at AS history_last_posted_at,
+              history.last_reappeared_at,
+              history.reappearance_count,
+              history.last_date_refresh_at,
+              history.date_refresh_count
+            FROM cached_postings AS postings
+            LEFT JOIN posting_history AS history
+              ON history.source_key = postings.source_key
+             AND history.external_id = postings.external_id
+            WHERE expires_at > ?
+              AND postings.posted_at IS NULL
+              AND postings.updated_at IS NULL
+            ORDER BY postings.cached_at DESC
+            LIMIT ${BULK_UNKNOWN_DATE_LIMIT}
+          `);
+          const datedRows = datedStatement.all(Date.now(), ...buildCachedRecencySqlParams(recencyPrefilter));
+          const unknownRows = unknownStatement.all(Date.now());
+          return [...datedRows, ...unknownRows]
+            .map(mapCachedRowToJob)
+            .filter((job) => matchesGeneratedInventoryKeywordPrefilter(job, keywordPrefilter));
+        }
+
+        const keywordSqlConfig = buildKeywordSqlConfig({
+          keywordPrefilter,
+          broadSearch: true,
+        });
         const keywordClause = keywordPrefilter
-          ? ` AND (${buildGeneratedInventoryKeywordSqlClause(textExpression, keywordPrefilter)})`
+          ? ` AND (${buildGeneratedInventoryKeywordSqlClause(keywordSqlConfig)})`
           : "";
         const statement = database.prepare(`
           SELECT
@@ -873,25 +978,86 @@ function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
           LEFT JOIN posting_history AS history
             ON history.source_key = postings.source_key
            AND history.external_id = postings.external_id
-          WHERE postings.source_key IN (${placeholders})
-            AND expires_at > ?
+          WHERE expires_at > ?
             ${keywordClause}
           ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+          LIMIT ${BULK_DATED_RESULT_LIMIT}
         `);
-          const rows = statement.all(
-            ...chunk,
-            Date.now(),
-            ...buildGeneratedInventoryKeywordSqlParams(keywordPrefilter)
-          );
-          allRows.push(...rows);
-        }
-          return mergeCachedJobRows(allRows, jsonRows).map(mapCachedRowToJob);
-      } catch (error) {
-        recoverToJsonCache(error);
+        const rows = statement.all(
+          Date.now(),
+          ...buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig)
+        );
+        return rows.map(mapCachedRowToJob);
       }
-    }
 
+      const allRows = [];
+      const chunkSize = 400;
+      for (let index = 0; index < normalizedKeys.length; index += chunkSize) {
+        const chunk = normalizedKeys.slice(index, index + chunkSize);
+        const placeholders = chunk.map(() => "?").join(", ");
+        const keywordSqlConfig = buildKeywordSqlConfig({
+          keywordPrefilter,
+          broadSearch: false,
+        });
+        const keywordClause = keywordPrefilter
+          ? ` AND (${buildGeneratedInventoryKeywordSqlClause(keywordSqlConfig)})`
+          : "";
+        const recencyClause = recencyPrefilter
+          ? " AND ((COALESCE(postings.posted_at, postings.updated_at) >= ?) OR (postings.posted_at IS NULL AND postings.updated_at IS NULL))"
+          : "";
+        const statement = database.prepare(`
+          SELECT
+            postings.*,
+            history.first_seen_at,
+            history.last_seen_at,
+            history.missing_since,
+            history.first_posted_at,
+            history.last_posted_at AS history_last_posted_at,
+            history.last_reappeared_at,
+            history.reappearance_count,
+            history.last_date_refresh_at,
+            history.date_refresh_count
+          FROM cached_postings AS postings
+            LEFT JOIN posting_history AS history
+              ON history.source_key = postings.source_key
+             AND history.external_id = postings.external_id
+            WHERE postings.source_key IN (${placeholders})
+              AND expires_at > ?
+              ${keywordClause}
+              ${recencyClause}
+            ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+          `);
+            const rows = statement.all(
+              ...chunk,
+              Date.now(),
+              ...buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig),
+              ...buildCachedRecencySqlParams(recencyPrefilter)
+            );
+            allRows.push(...rows);
+          }
+              return allRows.map(mapCachedRowToJob);
+          } catch (error) {
+          recoverToJsonCache(error);
+        }
+      }
+
+  const jsonRows = readJsonCachedRowsForSourceKeys(normalizedKeys, keywordPrefilter, recencyPrefilter);
   return jsonRows.map(mapCachedRowToJob);
+}
+
+function buildCachedRecencyPrefilter(filters = {}) {
+  const recency = String(filters?.recency || "").trim();
+  const windowMs = RECENCY_WINDOWS[recency];
+  if (!windowMs) {
+    return null;
+  }
+
+  const cutoff = new Date(Date.now() - windowMs).toISOString();
+  return { cutoff };
+}
+
+function buildCachedRecencySqlParams(prefilter) {
+  return prefilter?.cutoff ? [prefilter.cutoff] : [];
 }
 
 function pruneExpiredCache() {
@@ -920,8 +1086,14 @@ async function fetchJobsForSourceWithTimeout(source, filters, timeoutMs) {
 function getSourceSearchTimeoutMs(source) {
   const sourceKey = String(source?.key || "").toLowerCase();
   const provider = String(source?.provider || "").toLowerCase();
+  if (sourceKey === "zillow-careerpage") {
+    return Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, 60000);
+  }
+  if (sourceKey === "microsoft-careerpage") {
+    return Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, 120000);
+  }
   if (provider === "pcsx") {
-    return Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, 12000);
+    return Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, 30000);
   }
   if (provider === "workday" || provider === "ashby" || provider === "greenhouse") {
     return Math.max(DEFAULT_SOURCE_SEARCH_TIMEOUT_MS, 7000);
@@ -941,6 +1113,169 @@ export function safeReadCachedJobsForSource(sourceKey) {
   } catch {
     return [];
   }
+}
+
+export function getPrioritySourceKeysForKeyword(keyword, options = {}) {
+  initCacheDb();
+  pruneExpiredCache();
+
+  const phrases = expandKeywordQueriesForSearch(keyword)
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (phrases.length === 0) {
+    return [];
+  }
+
+  const providerFilter = Array.isArray(options.providers)
+    ? [...new Set(options.providers.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean))]
+    : [];
+  const limit = Math.max(1, Number(options.limit) || 250);
+  const historyLookbackDays = Math.max(1, Number(options.historyLookbackDays) || 180);
+  const historyCutoffMs = Date.now() - (historyLookbackDays * 24 * 60 * 60 * 1000);
+
+  if (cacheBackend === "sqlite") {
+    try {
+      const titleWhereClause = phrases.map(() => "LOWER(title) LIKE ?").join(" OR ");
+      const activeProviderClause = providerFilter.length > 0
+        ? ` AND provider IN (${providerFilter.map(() => "?").join(", ")})`
+        : "";
+      const historyProviderClause = providerFilter.length > 0
+        ? ` AND state.provider IN (${providerFilter.map(() => "?").join(", ")})`
+        : "";
+      const sql = `
+        WITH active_hits AS (
+          SELECT
+            source_key,
+            provider,
+            COUNT(*) AS active_hit_count,
+            MAX(COALESCE(posted_at, updated_at, '')) AS active_last_date,
+            0 AS history_hit_count,
+            0 AS history_last_seen_at
+          FROM cached_postings
+          WHERE expires_at > ?
+            ${activeProviderClause}
+            AND (${titleWhereClause})
+          GROUP BY source_key, provider
+        ),
+        history_hits AS (
+          SELECT
+            history.source_key AS source_key,
+            state.provider AS provider,
+            0 AS active_hit_count,
+            '' AS active_last_date,
+            COUNT(*) AS history_hit_count,
+            MAX(history.last_seen_at) AS history_last_seen_at
+          FROM posting_history AS history
+          INNER JOIN source_cache_state AS state
+            ON state.source_key = history.source_key
+          WHERE history.last_seen_at >= ?
+            ${historyProviderClause}
+            AND (${titleWhereClause})
+          GROUP BY history.source_key, state.provider
+        )
+        SELECT
+          source_key,
+          provider,
+          SUM(active_hit_count) AS active_hit_count,
+          MAX(active_last_date) AS active_last_date,
+          SUM(history_hit_count) AS history_hit_count,
+          MAX(history_last_seen_at) AS history_last_seen_at
+        FROM (
+          SELECT * FROM active_hits
+          UNION ALL
+          SELECT * FROM history_hits
+        )
+        GROUP BY source_key, provider
+        ORDER BY
+          (SUM(active_hit_count) * 20 + SUM(history_hit_count) * 5) DESC,
+          MAX(history_last_seen_at) DESC,
+          MAX(active_last_date) DESC,
+          source_key ASC
+        LIMIT ?
+      `;
+      const params = [
+        Date.now(),
+        ...providerFilter,
+        ...phrases.map((phrase) => `%${phrase}%`),
+        historyCutoffMs,
+        ...providerFilter,
+        ...phrases.map((phrase) => `%${phrase}%`),
+        limit,
+      ];
+      const rows = database.prepare(sql).all(...params);
+      return rows
+        .map((row) => String(row?.source_key || "").trim())
+        .filter(Boolean);
+    } catch (error) {
+      recoverToJsonCache(error);
+    }
+  }
+
+  const scoreBySourceKey = new Map();
+  const providerSet = providerFilter.length > 0 ? new Set(providerFilter) : null;
+  const addScore = (sourceKey, score, freshness = 0) => {
+    const key = String(sourceKey || "").trim();
+    if (!key) {
+      return;
+    }
+    const existing = scoreBySourceKey.get(key) || { score: 0, freshness: 0 };
+    existing.score += score;
+    existing.freshness = Math.max(existing.freshness, freshness);
+    scoreBySourceKey.set(key, existing);
+  };
+  const titleMatches = (title) => {
+    const haystack = String(title || "").trim().toLowerCase();
+    return haystack && phrases.some((phrase) => haystack.includes(phrase));
+  };
+
+  for (const posting of Array.isArray(jsonCache.postings) ? jsonCache.postings : []) {
+    if (Number(posting?.expires_at || 0) <= Date.now()) {
+      continue;
+    }
+    const provider = String(posting?.provider || "").trim().toLowerCase();
+    if (providerSet && !providerSet.has(provider)) {
+      continue;
+    }
+    if (!titleMatches(posting?.title)) {
+      continue;
+    }
+    const freshness = new Date(posting?.posted_at || posting?.updated_at || 0).getTime() || 0;
+    addScore(posting?.source_key, 20, freshness);
+  }
+
+  const historyEntries = jsonCache.postingHistory && typeof jsonCache.postingHistory === "object"
+    ? Object.entries(jsonCache.postingHistory)
+    : [];
+  for (const [historyKey, history] of historyEntries) {
+    const sourceKey = String(history?.source_key || historyKey.split("::")[0] || "").trim();
+    if (!sourceKey || !titleMatches(history?.title)) {
+      continue;
+    }
+    const provider = String(jsonCache.sourceState?.[sourceKey]?.provider || "").trim().toLowerCase();
+    if (providerSet && !providerSet.has(provider)) {
+      continue;
+    }
+    const freshness = Number(history?.last_seen_at || 0);
+    if (freshness < historyCutoffMs) {
+      continue;
+    }
+    addScore(sourceKey, 5, freshness);
+  }
+
+  return [...scoreBySourceKey.entries()]
+    .sort((left, right) => {
+      const scoreDelta = (right[1]?.score || 0) - (left[1]?.score || 0);
+      if (scoreDelta !== 0) {
+        return scoreDelta;
+      }
+      const freshnessDelta = (right[1]?.freshness || 0) - (left[1]?.freshness || 0);
+      if (freshnessDelta !== 0) {
+        return freshnessDelta;
+      }
+      return left[0].localeCompare(right[0]);
+    })
+    .slice(0, limit)
+    .map(([sourceKey]) => sourceKey);
 }
 
 function selectGeneratedInventoryWarmBatch(sources, limit) {
@@ -1031,7 +1366,7 @@ function withTimeout(promise, timeoutMs, message) {
 function loadJsonCache() {
   try {
     if (existsSync(JSON_CACHE_PATH)) {
-      const parsed = JSON.parse(readFileSync(JSON_CACHE_PATH, "utf8"));
+      const parsed = parseJsonCachePayload(readFileSync(JSON_CACHE_PATH, "utf8"));
       jsonCache = {
         postings: Array.isArray(parsed?.postings) ? parsed.postings : [],
         sourceState: parsed?.sourceState && typeof parsed.sourceState === "object" ? parsed.sourceState : {},
@@ -1039,7 +1374,10 @@ function loadJsonCache() {
       };
       return;
     }
-  } catch {
+  } catch (error) {
+    if (error?.code === "EBUSY" || error?.code === "EPERM") {
+      return;
+    }
     // Ignore malformed cache and rebuild from empty.
   }
 
@@ -1056,10 +1394,30 @@ function saveJsonCache() {
   }
 
   mkdirSync(CACHE_DIR, { recursive: true });
-  writeFileSync(JSON_CACHE_PATH, JSON.stringify(jsonCache, null, 2), "utf8");
+  try {
+    const payload = JSON.stringify(jsonCache, null, 2);
+    const tempPath = `${JSON_CACHE_PATH}.${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`;
+    writeFileSync(tempPath, payload, "utf8");
+    try {
+      renameSync(tempPath, JSON_CACHE_PATH);
+    } catch (error) {
+      if (error?.code !== "EBUSY" && error?.code !== "EPERM") {
+        throw error;
+      }
+      writeFileSync(JSON_CACHE_PATH, payload, "utf8");
+      try {
+        unlinkSync(tempPath);
+      } catch {}
+    }
+  } catch (error) {
+    if (error?.code === "EBUSY" || error?.code === "EPERM") {
+      return;
+    }
+    throw error;
+  }
 }
 
-function readJsonCachedRowsForSourceKeys(sourceKeys, keywordPrefilter = null) {
+function readJsonCachedRowsForSourceKeys(sourceKeys, keywordPrefilter = null, recencyPrefilter = null) {
   loadJsonCache();
   const keySet = new Set(
     (Array.isArray(sourceKeys) ? sourceKeys : [])
@@ -1073,6 +1431,7 @@ function readJsonCachedRowsForSourceKeys(sourceKeys, keywordPrefilter = null) {
   return jsonCache.postings
     .filter((posting) => keySet.has(String(posting.source_key || "")) && Number(posting.expires_at || 0) > Date.now())
     .filter((posting) => matchesGeneratedInventoryKeywordPrefilter(posting, keywordPrefilter))
+    .filter((posting) => matchesJsonCachedRecencyPrefilter(posting, recencyPrefilter))
     .sort((left, right) => {
       const leftTime = new Date(left.posted_at || left.updated_at || 0).getTime() || 0;
       const rightTime = new Date(right.posted_at || right.updated_at || 0).getTime() || 0;
@@ -1082,6 +1441,80 @@ function readJsonCachedRowsForSourceKeys(sourceKeys, keywordPrefilter = null) {
       const history = jsonCache.postingHistory?.[String(posting.source_key || "")]?.[String(posting.external_id || "")] || {};
       return { ...posting, ...history };
     });
+}
+
+function matchesJsonCachedRecencyPrefilter(posting, recencyPrefilter) {
+  if (!recencyPrefilter?.cutoff) {
+    return true;
+  }
+
+  const cutoffTime = Date.parse(recencyPrefilter.cutoff);
+  if (!Number.isFinite(cutoffTime)) {
+    return true;
+  }
+
+  const postedTime = Date.parse(posting?.posted_at || posting?.updated_at || "");
+  if (!Number.isFinite(postedTime)) {
+    return true;
+  }
+
+  return postedTime >= cutoffTime;
+}
+
+function parseJsonCachePayload(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const recovered = extractFirstJsonDocument(raw);
+    if (!recovered) {
+      throw error;
+    }
+    return JSON.parse(recovered);
+  }
+}
+
+function extractFirstJsonDocument(raw) {
+  const text = String(raw || "").trim();
+  if (!text.startsWith("{")) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(0, index + 1);
+      }
+    }
+  }
+
+  return null;
 }
 
 function buildGeneratedInventoryKeywordPrefilter(filters = {}) {
@@ -1104,27 +1537,69 @@ function buildGeneratedInventoryKeywordPrefilter(filters = {}) {
   return {
     phrase: keyword,
     words,
+    searchInDescription: filters?.keywordScope === "title_and_description" && words.length <= 1,
   };
 }
 
-function buildGeneratedInventoryKeywordSqlClause(textExpression, keywordPrefilter) {
+function buildKeywordSqlConfig({ keywordPrefilter, broadSearch = false } = {}) {
   if (!keywordPrefilter) {
+    return null;
+  }
+
+  if (broadSearch) {
+    return {
+      phraseExpression: "LOWER(COALESCE(postings.title, ''))",
+      wordExpressions: [
+        "LOWER(COALESCE(postings.title, ''))",
+        "LOWER(COALESCE(postings.team, ''))",
+        "LOWER(COALESCE(postings.department, ''))",
+        "LOWER(COALESCE(postings.company, ''))",
+      ],
+      phrase: keywordPrefilter.phrase,
+      words: keywordPrefilter.words,
+    };
+  }
+
+  const titleExpressions = [
+    "LOWER(COALESCE(postings.title, ''))",
+    "LOWER(COALESCE(postings.team, ''))",
+    "LOWER(COALESCE(postings.department, ''))",
+  ];
+  const textExpression = keywordPrefilter.searchInDescription
+    ? "LOWER(COALESCE(postings.title, '') || ' ' || COALESCE(postings.team, '') || ' ' || COALESCE(postings.department, '') || ' ' || COALESCE(postings.search_text, '') || ' ' || COALESCE(postings.description_snippet, ''))"
+    : "LOWER(COALESCE(postings.title, ''))";
+  return {
+    phraseExpression: textExpression,
+    wordExpressions: keywordPrefilter.searchInDescription ? [textExpression] : titleExpressions,
+    phrase: keywordPrefilter.phrase,
+    words: keywordPrefilter.words,
+  };
+}
+
+function buildGeneratedInventoryKeywordSqlClause(keywordSqlConfig) {
+  if (!keywordSqlConfig) {
     return "1=1";
   }
 
-  const wordClause = keywordPrefilter.words.map(() => `${textExpression} LIKE ?`).join(" AND ");
-  return `(${textExpression} LIKE ? OR (${wordClause}))`;
+  const phraseClause = `${keywordSqlConfig.phraseExpression} LIKE ?`;
+  const wordClause = keywordSqlConfig.words
+    .map(() => `(${keywordSqlConfig.wordExpressions.map((expression) => `${expression} LIKE ?`).join(" OR ")})`)
+    .join(" AND ");
+  return `(${phraseClause} OR (${wordClause}))`;
 }
 
-function buildGeneratedInventoryKeywordSqlParams(keywordPrefilter) {
-  if (!keywordPrefilter) {
+function buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig) {
+  if (!keywordSqlConfig) {
     return [];
   }
 
-  return [
-    `%${keywordPrefilter.phrase}%`,
-    ...keywordPrefilter.words.map((word) => `%${word}%`),
-  ];
+  const params = [`%${keywordSqlConfig.phrase}%`];
+  for (const word of keywordSqlConfig.words) {
+    for (let index = 0; index < keywordSqlConfig.wordExpressions.length; index += 1) {
+      params.push(`%${word}%`);
+    }
+  }
+  return params;
 }
 
 function matchesGeneratedInventoryKeywordPrefilter(posting, keywordPrefilter) {
@@ -1132,21 +1607,40 @@ function matchesGeneratedInventoryKeywordPrefilter(posting, keywordPrefilter) {
     return true;
   }
 
-  const haystack = String([
+  const titleHaystack = String([
     posting?.title || "",
+    posting?.team || "",
+    posting?.department || "",
+  ].join(" ")).toLowerCase();
+  const extendedHaystack = String([
+    posting?.title || "",
+    posting?.team || "",
+    posting?.department || "",
     posting?.search_text || "",
     posting?.description_snippet || "",
   ].join(" ")).toLowerCase();
 
-  if (!haystack.trim()) {
+  if (!titleHaystack.trim()) {
     return false;
   }
 
-  if (haystack.includes(keywordPrefilter.phrase)) {
+  if (titleHaystack.includes(keywordPrefilter.phrase)) {
     return true;
   }
 
-  return keywordPrefilter.words.every((word) => haystack.includes(word));
+  if (keywordPrefilter.words.every((word) => titleHaystack.includes(word))) {
+    return true;
+  }
+
+  if (!keywordPrefilter.searchInDescription || !extendedHaystack.trim()) {
+    return false;
+  }
+
+  if (extendedHaystack.includes(keywordPrefilter.phrase)) {
+    return true;
+  }
+
+  return keywordPrefilter.words.every((word) => extendedHaystack.includes(word));
 }
 
 function mergeCachedJobRows(sqliteRows, jsonRows) {
@@ -1202,32 +1696,254 @@ function looksLikeApplicantProWrapperRow(row) {
 
 function mapCachedRowToJob(row) {
   const repostInfo = buildRepostInfo(row);
+  const normalizedApplyUrl = normalizeDescriptionFetchUrl(row.apply_url || "");
+  const combinedText = [
+    row.search_text || null,
+    row.description_snippet || null,
+    row.raw_location_text || null,
+    row.location_label || null,
+    row.title || null,
+  ].filter(Boolean).join(" \n ");
+  const providedLocationLabel = row.location_label || null;
+  const derivedLocation = deriveLocationMetadata({
+    title: row.title,
+    locationLabel: providedLocationLabel,
+    city: row.city || null,
+    region: row.region || null,
+    country: row.country || null,
+    rawLocationText: row.raw_location_text || null,
+    searchText: combinedText || null,
+    descriptionSnippet: row.description_snippet || null,
+  });
+  const externalId = deriveCachedExternalId(row.external_id, normalizedApplyUrl, combinedText);
+  const locationLabel = chooseCachedLocationLabel(providedLocationLabel, derivedLocation, combinedText);
+  const workArrangement = row.work_arrangement && row.work_arrangement !== "unknown"
+    ? row.work_arrangement
+    : inferWorkArrangement([
+      row.work_arrangement,
+      locationLabel,
+      row.raw_location_text || derivedLocation.rawLocationText || null,
+      row.search_text || row.description_snippet || null,
+      row.description_snippet || null,
+    ].filter(Boolean).join(" \n "));
+  const postedDate = row.posted_at || derivePostedAtFromCachedText(combinedText) || null;
+  const updatedDate = row.updated_at || null;
+  const firstSeenDate = Number(row.first_seen_at || 0) > 0
+    ? new Date(Number(row.first_seen_at)).toISOString()
+    : null;
+  const parsedRecencyDate = postedDate || firstSeenDate || updatedDate || null;
+  const dateStatus = postedDate
+    ? "posted"
+    : firstSeenDate
+      ? (String(row.date_status || "").trim().toLowerCase() === "updated" ? "updated" : "first_seen")
+      : updatedDate
+        ? "updated"
+        : "unknown";
+  const compensation = row.compensation || deriveCompensationFromCachedText(combinedText) || null;
+  const applicationDeadlineAt = extractApplicationDeadlineFromText(combinedText) || null;
   return {
     sourceKey: row.source_key,
     sourceName: row.source_name,
     provider: row.provider,
-    company: row.company,
-    externalId: row.external_id,
+    company: deriveEmployerCompany({
+      company: row.company,
+      applyUrl: normalizedApplyUrl,
+      searchText: row.search_text || null,
+      descriptionSnippet: row.description_snippet || null,
+      title: row.title,
+    }, {
+      company: row.company,
+    }),
+    externalId,
     title: row.title,
     team: row.team || null,
     department: row.department || null,
-    locationLabel: row.location_label || "Unspecified",
-    city: row.city || null,
-    region: row.region || null,
-    country: row.country || null,
-    workArrangement: row.work_arrangement || null,
-    postedAt: row.posted_at || null,
-    updatedAt: row.updated_at || null,
-    dateStatus: row.date_status || null,
-    applyUrl: row.apply_url,
+    locationLabel,
+    city: row.city || derivedLocation.city || null,
+    region: row.region || derivedLocation.region || null,
+    country: row.country || derivedLocation.country || null,
+    workArrangement,
+    postedAt: postedDate,
+    updatedAt: updatedDate,
+    postedDate,
+    updatedDate,
+    firstSeenDate,
+    parsedRecencyDate,
+    dateStatus,
+    applyUrl: normalizedApplyUrl,
     descriptionSnippet: row.description_snippet || null,
     searchText: row.search_text || row.description_snippet || null,
     employmentType: row.employment_type || null,
-    compensation: row.compensation || null,
-    rawLocationText: row.raw_location_text || null,
+    compensation,
+    applicationDeadlineAt,
+    rawLocationText: row.raw_location_text || derivedLocation.rawLocationText || null,
     repostInfo,
     isPossibleRepost: repostInfo.isPossibleRepost,
   };
+}
+
+function deriveCachedExternalId(currentValue, applyUrl, text) {
+  const explicit = normalizeCachedJobIdCandidate(currentValue);
+  if (explicit) {
+    return explicit;
+  }
+
+  const fromUrl = extractCachedJobIdFromUrl(applyUrl);
+  if (fromUrl) {
+    return fromUrl;
+  }
+
+  const fromText = extractCachedJobIdFromText(text);
+  if (fromText) {
+    return fromText;
+  }
+
+  return String(currentValue || applyUrl || "").trim();
+}
+
+function chooseCachedLocationLabel(providedLocationLabel, derivedLocation, combinedText) {
+  const provided = String(providedLocationLabel || "").trim();
+  const derivedLabel = String(derivedLocation?.locationLabel || "").trim();
+  const derivedRaw = String(derivedLocation?.rawLocationText || "").trim();
+
+  if (isGenericLocationLabel(provided)) {
+    return derivedLabel || provided || "Unspecified";
+  }
+
+  if (/^(canada|united states|usa|us)$/i.test(provided)
+    && /\b(remote|hybrid|onsite|in-?office)\b/i.test(String(combinedText || ""))) {
+    return derivedRaw || derivedLabel || provided;
+  }
+
+  return provided || derivedLabel || "Unspecified";
+}
+
+function extractCachedJobIdFromUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    const url = new URL(raw);
+    const queryCandidates = [
+      url.searchParams.get("gh_jid"),
+      url.searchParams.get("jobId"),
+      url.searchParams.get("jobid"),
+      url.searchParams.get("req"),
+      url.searchParams.get("reqId"),
+      url.searchParams.get("requisitionId"),
+      url.searchParams.get("jid"),
+      url.searchParams.get("job"),
+    ];
+    for (const candidate of queryCandidates) {
+      const normalized = normalizeCachedJobIdCandidate(candidate);
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    const pathMatches = [
+      url.pathname.match(/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i),
+      url.pathname.match(/\/(R-\d+(?:-\d+)?)\/?$/i),
+      url.pathname.match(/\/jobs\/(\d{4,})(?:\/|$)/i),
+      url.pathname.match(/\/position\/(\d{4,})(?:\/|$)/i),
+      url.pathname.match(/\/job\/([A-Z0-9]{6,12})(?:\/|$)/i),
+      url.pathname.match(/\/job\/[^/]+\/[^/]+\/([A-Za-z]-?\d+(?:-\d+)?)\/?$/i),
+      url.pathname.match(/\/job\/(\d{4,}-\d{4,})\/?$/i),
+      url.pathname.match(/_([A-Za-z]\d+(?:-\d+)?)\/?$/i),
+    ];
+    for (const match of pathMatches) {
+      const normalized = normalizeCachedJobIdCandidate(match?.[1] || "");
+      if (normalized) {
+        return normalized;
+      }
+    }
+  } catch {}
+
+  return "";
+}
+
+function extractCachedJobIdFromText(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+
+  const matches = [
+    text.match(/\b(?:job\s*id|id\s*#|req(?:uisition)?\s*id|job\s*requisition\s*id)\s*[:#-]?\s*([A-Za-z]-?\d+(?:-\d+)?|[A-Za-z]\d+(?:-\d+)?|[A-Z0-9]{6,12}|\d{4,}-\d{4,}|\d{4,})\b/i),
+    text.match(/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i),
+    text.match(/\b(R-\d+(?:-\d+)?)\b/i),
+    text.match(/\b([A-Z0-9]{6,12})\b/i),
+    text.match(/\b(\d{4,}-\d{4,})\b/),
+    text.match(/\/jobs\/(\d{4,})(?:\/|$)/i),
+  ];
+
+  for (const match of matches) {
+    const normalized = normalizeCachedJobIdCandidate(match?.[1] || "");
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
+}
+
+function normalizeCachedJobIdCandidate(value) {
+  const raw = String(value || "").trim();
+  if (!raw || /^https?:/i.test(raw) || raw === "undefined" || raw === "null") {
+    return "";
+  }
+
+  if (/^[A-Za-z]+-\d+(?:-\d+)?$/i.test(raw)
+    || /^[A-Za-z]\d+(?:-\d+)?$/i.test(raw)
+    || (/^[A-Z0-9]{6,12}$/i.test(raw) && /[A-Z]/i.test(raw) && /\d/.test(raw))
+    || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)
+    || /^\d{4,}-\d{4,}$/.test(raw)
+    || /^\d{4,}$/.test(raw)) {
+    return /[a-z]/i.test(raw) && /[A-Z]/.test(raw) ? raw : raw.toUpperCase?.() ? raw.toUpperCase() : raw;
+  }
+
+  return "";
+}
+
+function derivePostedAtFromCachedText(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return null;
+  }
+  return extractPostedDateFromHtml(text);
+}
+
+function deriveCompensationFromCachedText(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return null;
+  }
+
+  const labeledMatch = text.match(/\b(?:posted salary range|salary range|pay range|base salary range|compensation(?: range)?)\s*[:\-]?\s*([^.\n]{6,160})/i);
+  const currencyMatch = text.match(/([$€£¥]\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m)?\s*(?:-|–|to)\s*[$€£¥]?\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m)?(?:\s*(?:USD|CAD|EUR|GBP|AUD|NZD|JPY))?(?:\s*\/\s*(?:hr|hour|yr|year))?)/i);
+  const candidate = labeledMatch?.[1] || currencyMatch?.[1] || "";
+  return cleanCachedCompensation(candidate);
+}
+
+function cleanCachedCompensation(value) {
+  let text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return null;
+  }
+
+  text = text
+    .replace(/^(salary|compensation|posted salary range|pay range|base salary range)\s*[:\-]?\s*/i, "")
+    .replace(/\bwhere applicable\b.*$/i, "")
+    .replace(/\bdepending on experience\b.*$/i, "")
+    .trim();
+
+  if (!/[$€£¥]|\b(?:USD|CAD|EUR|GBP|AUD|NZD|JPY)\b/i.test(text)) {
+    return null;
+  }
+
+  return text || null;
 }
 
 function buildRepostInfo(row) {
@@ -1239,22 +1955,22 @@ function buildRepostInfo(row) {
   const lastDateRefreshAt = Number(row.last_date_refresh_at || 0) || null;
   const firstPostedAt = normalizeHistoryDate(row.first_posted_at || row.posted_at || row.updated_at);
   const latestPostedAt = normalizeHistoryDate(row.history_last_posted_at || row.last_posted_at || row.posted_at || row.updated_at);
-  const isPossibleRepost = reappearanceCount > 0 || dateRefreshCount > 0;
+  const hasMeaningfulDateRefresh = dateRefreshCount > 0 && hasMeaningfulPostedDateRefresh(firstPostedAt, latestPostedAt);
+  const effectiveDateRefreshCount = hasMeaningfulDateRefresh ? dateRefreshCount : 0;
+  const isPossibleRepost = reappearanceCount > 0 || hasMeaningfulDateRefresh;
 
   let label = "";
-  if (reappearanceCount > 0 && dateRefreshCount > 0) {
+  if (hasMeaningfulDateRefresh) {
     label = "POSSIBLE REPOST";
   } else if (reappearanceCount > 0) {
     label = "REPOSTED";
-  } else if (dateRefreshCount > 0) {
-    label = "POSSIBLE REPOST";
   }
 
   const details = [];
   if (reappearanceCount > 0) {
     details.push("Seen before and reappeared");
   }
-  if (dateRefreshCount > 0) {
+  if (hasMeaningfulDateRefresh) {
     details.push("Earlier cached sightings suggest this posting was refreshed");
   }
 
@@ -1263,7 +1979,7 @@ function buildRepostInfo(row) {
     label,
     details,
     reappearanceCount,
-    dateRefreshCount,
+    dateRefreshCount: effectiveDateRefreshCount,
     firstSeenAt,
     lastSeenAt,
     lastReappearedAt,
@@ -1271,6 +1987,14 @@ function buildRepostInfo(row) {
     firstPostedAt,
     latestPostedAt,
   };
+}
+
+function hasMeaningfulPostedDateRefresh(previousPostedAt, currentPostedAt) {
+  const previousTime = getHistoryTime(previousPostedAt);
+  const currentTime = getHistoryTime(currentPostedAt);
+  return previousTime > 0
+    && currentTime > previousTime
+    && currentTime - previousTime >= REPOST_POSTED_GAP_MS;
 }
 
 function normalizeHistoryDate(value) {
