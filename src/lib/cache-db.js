@@ -904,54 +904,69 @@ function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
   if (cacheBackend === "sqlite") {
     try {
       if (normalizedKeys.length >= BULK_CACHE_ALL_SOURCES_THRESHOLD) {
+        const sourceChunks = buildSourceKeyChunks(normalizedKeys);
+
         if (recencyPrefilter) {
-          const datedStatement = database.prepare(`
-            SELECT
-              postings.*,
-              history.first_seen_at,
-              history.last_seen_at,
-              history.missing_since,
-              history.first_posted_at,
-              history.last_posted_at AS history_last_posted_at,
-              history.last_reappeared_at,
-              history.reappearance_count,
-              history.last_date_refresh_at,
-              history.date_refresh_count
-            FROM cached_postings AS postings
-            LEFT JOIN posting_history AS history
-              ON history.source_key = postings.source_key
-             AND history.external_id = postings.external_id
-            WHERE expires_at > ?
-              AND COALESCE(postings.posted_at, postings.updated_at) >= ?
-            ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
-            LIMIT ${BULK_DATED_RESULT_LIMIT}
-          `);
-          const unknownStatement = database.prepare(`
-            SELECT
-              postings.*,
-              history.first_seen_at,
-              history.last_seen_at,
-              history.missing_since,
-              history.first_posted_at,
-              history.last_posted_at AS history_last_posted_at,
-              history.last_reappeared_at,
-              history.reappearance_count,
-              history.last_date_refresh_at,
-              history.date_refresh_count
-            FROM cached_postings AS postings
-            LEFT JOIN posting_history AS history
-              ON history.source_key = postings.source_key
-             AND history.external_id = postings.external_id
-            WHERE expires_at > ?
-              AND postings.posted_at IS NULL
-              AND postings.updated_at IS NULL
-            ORDER BY postings.cached_at DESC
-            LIMIT ${BULK_UNKNOWN_DATE_LIMIT}
-          `);
-          const datedRows = datedStatement.all(Date.now(), ...buildCachedRecencySqlParams(recencyPrefilter));
-          const unknownRows = unknownStatement.all(Date.now());
+          const datedRows = [];
+          const unknownRows = [];
+          for (const chunk of sourceChunks) {
+            const placeholders = chunk.map(() => "?").join(", ");
+            const datedStatement = database.prepare(`
+              SELECT
+                postings.*,
+                history.first_seen_at,
+                history.last_seen_at,
+                history.missing_since,
+                history.first_posted_at,
+                history.last_posted_at AS history_last_posted_at,
+                history.last_reappeared_at,
+                history.reappearance_count,
+                history.last_date_refresh_at,
+                history.date_refresh_count
+              FROM cached_postings AS postings
+              LEFT JOIN posting_history AS history
+                ON history.source_key = postings.source_key
+               AND history.external_id = postings.external_id
+              WHERE postings.source_key IN (${placeholders})
+                AND expires_at > ?
+                AND COALESCE(postings.posted_at, postings.updated_at) >= ?
+              ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+              LIMIT ${BULK_DATED_RESULT_LIMIT}
+            `);
+            const unknownStatement = database.prepare(`
+              SELECT
+                postings.*,
+                history.first_seen_at,
+                history.last_seen_at,
+                history.missing_since,
+                history.first_posted_at,
+                history.last_posted_at AS history_last_posted_at,
+                history.last_reappeared_at,
+                history.reappearance_count,
+                history.last_date_refresh_at,
+                history.date_refresh_count
+              FROM cached_postings AS postings
+              LEFT JOIN posting_history AS history
+                ON history.source_key = postings.source_key
+               AND history.external_id = postings.external_id
+              WHERE postings.source_key IN (${placeholders})
+                AND expires_at > ?
+                AND postings.posted_at IS NULL
+                AND postings.updated_at IS NULL
+              ORDER BY postings.cached_at DESC
+              LIMIT ${BULK_UNKNOWN_DATE_LIMIT}
+            `);
+            datedRows.push(...datedStatement.all(
+              ...chunk,
+              Date.now(),
+              ...buildCachedRecencySqlParams(recencyPrefilter)
+            ));
+            unknownRows.push(...unknownStatement.all(...chunk, Date.now()));
+          }
           return [...datedRows, ...unknownRows]
             .map(mapCachedRowToJob)
+            .sort(sortCachedJobsForDisplay)
+            .slice(0, BULK_DATED_RESULT_LIMIT + BULK_UNKNOWN_DATE_LIMIT)
             .filter((job) => matchesGeneratedInventoryKeywordPrefilter(job, keywordPrefilter));
         }
 
@@ -962,32 +977,41 @@ function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
         const keywordClause = keywordPrefilter
           ? ` AND (${buildGeneratedInventoryKeywordSqlClause(keywordSqlConfig)})`
           : "";
-        const statement = database.prepare(`
-          SELECT
-            postings.*,
-            history.first_seen_at,
-            history.last_seen_at,
-            history.missing_since,
-            history.first_posted_at,
-            history.last_posted_at AS history_last_posted_at,
-            history.last_reappeared_at,
-            history.reappearance_count,
-            history.last_date_refresh_at,
-            history.date_refresh_count
-          FROM cached_postings AS postings
-          LEFT JOIN posting_history AS history
-            ON history.source_key = postings.source_key
-           AND history.external_id = postings.external_id
-          WHERE expires_at > ?
-            ${keywordClause}
-          ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
-          LIMIT ${BULK_DATED_RESULT_LIMIT}
-        `);
-        const rows = statement.all(
-          Date.now(),
-          ...buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig)
-        );
-        return rows.map(mapCachedRowToJob);
+        const rows = [];
+        for (const chunk of sourceChunks) {
+          const placeholders = chunk.map(() => "?").join(", ");
+          const statement = database.prepare(`
+            SELECT
+              postings.*,
+              history.first_seen_at,
+              history.last_seen_at,
+              history.missing_since,
+              history.first_posted_at,
+              history.last_posted_at AS history_last_posted_at,
+              history.last_reappeared_at,
+              history.reappearance_count,
+              history.last_date_refresh_at,
+              history.date_refresh_count
+            FROM cached_postings AS postings
+            LEFT JOIN posting_history AS history
+              ON history.source_key = postings.source_key
+             AND history.external_id = postings.external_id
+            WHERE postings.source_key IN (${placeholders})
+              AND expires_at > ?
+              ${keywordClause}
+            ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+            LIMIT ${BULK_DATED_RESULT_LIMIT}
+          `);
+          rows.push(...statement.all(
+            ...chunk,
+            Date.now(),
+            ...buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig)
+          ));
+        }
+        return rows
+          .map(mapCachedRowToJob)
+          .sort(sortCachedJobsForDisplay)
+          .slice(0, BULK_DATED_RESULT_LIMIT);
       }
 
       const allRows = [];
@@ -1058,6 +1082,24 @@ function buildCachedRecencyPrefilter(filters = {}) {
 
 function buildCachedRecencySqlParams(prefilter) {
   return prefilter?.cutoff ? [prefilter.cutoff] : [];
+}
+
+function buildSourceKeyChunks(sourceKeys) {
+  const chunkSize = 400;
+  const chunks = [];
+  for (let index = 0; index < sourceKeys.length; index += chunkSize) {
+    chunks.push(sourceKeys.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function sortCachedJobsForDisplay(left, right) {
+  const leftTime = new Date(left?.postedAt || left?.updatedAt || left?.postedDate || left?.updatedDate || 0).getTime() || 0;
+  const rightTime = new Date(right?.postedAt || right?.updatedAt || right?.postedDate || right?.updatedDate || 0).getTime() || 0;
+  if (leftTime !== rightTime) {
+    return rightTime - leftTime;
+  }
+  return String(left?.title || "").localeCompare(String(right?.title || ""));
 }
 
 function pruneExpiredCache() {
