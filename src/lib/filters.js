@@ -6,10 +6,25 @@ export const RECENCY_WINDOWS = {
   "30d": 30 * 24 * 60 * 60 * 1000,
 };
 
-export const DISTANCE_OPTIONS = [3, 5, 10, 15, 20];
+export const DISTANCE_OPTIONS = [3, 5, 10, 15, 20, 50, 100];
 
 const KEYWORD_ALIASES = {
-  "product manager": ["product manager", "product owner", "product lead"],
+  "product manager": [
+    "product manager",
+    "senior product manager",
+    "sr product manager",
+    "principal product manager",
+    "group product manager",
+    "lead product manager",
+    "product owner",
+    "product management",
+    "platform product manager",
+    "technical product manager",
+    "product operations",
+    "product operations manager",
+    "product ops",
+    "product lead",
+  ],
   "technical program manager": ["technical program manager", "tpm", "program manager"],
   "program manager": ["program manager", "project manager"],
   "project manager": ["project manager", "delivery manager"],
@@ -220,6 +235,10 @@ const TITLE_FOCUSED_ALIAS_QUERIES = new Set([
   "receptionist",
 ]);
 
+const LEGACY_KEYWORD_ALIASES = {
+  "product manager": ["product manager", "product owner", "product lead"],
+};
+
 const LOCATION_ALIASES = [
   { aliases: ["seattle", "sea"], latitude: 47.6062, longitude: -122.3321 },
   { aliases: ["bellevue"], latitude: 47.6101, longitude: -122.2015 },
@@ -369,14 +388,96 @@ export function toIsoDate(value) {
   return date ? date.toISOString() : null;
 }
 
-export function matchesKeyword(job, keyword, keywordScope = "title_and_description", keywordMode = "strict") {
+export function resolveJobRecencyFields(job = {}) {
+  const rawPostedDate = job?.postedDate ?? job?.postedAt ?? null;
+  const rawUpdatedDate = job?.updatedDate ?? job?.updatedAt ?? null;
+  const rawFirstSeenDate = job?.firstSeenDate ?? job?.firstSeenAt ?? job?.first_seen_at ?? null;
+
+  const postedDate = toIsoDate(rawPostedDate);
+  const updatedDate = toIsoDate(rawUpdatedDate);
+  const firstSeenDate = toIsoDate(rawFirstSeenDate);
+  const parsedRecencyDate = postedDate || firstSeenDate || updatedDate || null;
+  const invalidDate = (
+    (hasMeaningfulDateInput(rawPostedDate) && !postedDate)
+    || (hasMeaningfulDateInput(rawUpdatedDate) && !updatedDate)
+    || (hasMeaningfulDateInput(rawFirstSeenDate) && !firstSeenDate)
+  );
+
+  return {
+    rawPostedDate,
+    rawUpdatedDate,
+    rawFirstSeenDate,
+    postedDate,
+    updatedDate,
+    firstSeenDate,
+    parsedRecencyDate,
+    dateStatus: inferResolvedDateStatus({
+      explicitStatus: job?.dateStatus,
+      postedDate,
+      updatedDate,
+      firstSeenDate,
+    }),
+    invalidDate,
+  };
+}
+
+export function evaluateRecency(job, recencyKey) {
+  const recency = resolveJobRecencyFields(job);
+  const normalizedRecencyKey = normalizeRecencyKey(recencyKey);
+  if (!normalizedRecencyKey || !RECENCY_WINDOWS[normalizedRecencyKey]) {
+    return {
+      matches: true,
+      reason: recency.parsedRecencyDate ? "within_window" : (recency.invalidDate ? "invalid_date" : "unknown_date"),
+      ...recency,
+    };
+  }
+
+  if (!recency.parsedRecencyDate) {
+    return {
+      matches: true,
+      reason: recency.invalidDate ? "invalid_date" : "unknown_date",
+      ...recency,
+    };
+  }
+
+  const timestamp = new Date(recency.parsedRecencyDate).getTime();
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return {
+      matches: true,
+      reason: "invalid_date",
+      ...recency,
+      parsedRecencyDate: null,
+      dateStatus: "unknown",
+      invalidDate: true,
+    };
+  }
+
+  const withinWindow = Date.now() - timestamp <= RECENCY_WINDOWS[normalizedRecencyKey];
+  return {
+    matches: withinWindow,
+    reason: withinWindow ? "within_window" : "old",
+    ...recency,
+  };
+}
+
+export function evaluateKeywordMatch(job, keyword, keywordScope = "title_and_description", keywordMode = "strict") {
   if (!keyword) {
-    return true;
+    return {
+      matches: true,
+      reason: "no_keyword",
+      matchedCandidate: null,
+      matchedField: null,
+    };
   }
 
   const query = normalizeText(keyword);
   if (!query) {
-    return true;
+    return {
+      matches: true,
+      reason: "empty_keyword",
+      matchedCandidate: null,
+      matchedField: null,
+    };
   }
 
   const queries = expandKeywordQueries(query);
@@ -389,10 +490,34 @@ export function matchesKeyword(job, keyword, keywordScope = "title_and_descripti
   const titleFocusedAliasQuery = aliasConfigured && TITLE_FOCUSED_ALIAS_QUERIES.has(query);
 
   if (!useLooseMatching) {
-    const strictQueries = [query];
+    const strictQueries = titleFocusedAliasQuery ? queries : [query];
 
     if (titleFocusedAliasQuery) {
-      return strictQueries.some((candidate) => matchesCandidateInText(title, candidate));
+      const matchedCandidate = strictQueries.find((candidate) => matchesCandidateInText(title, candidate));
+      if (matchedCandidate) {
+        return {
+          matches: true,
+          reason: "strict_title_match",
+          matchedCandidate,
+          matchedField: "title",
+        };
+      }
+
+      if (query === "product manager" && matchesProductManagerPmContext(title)) {
+        return {
+          matches: true,
+          reason: "strict_title_pm_context_match",
+          matchedCandidate: "pm_with_product_context",
+          matchedField: "title",
+        };
+      }
+
+      return {
+        matches: false,
+        reason: "strict_title_alias_miss",
+        matchedCandidate: null,
+        matchedField: null,
+      };
     }
 
     const strictHaystacks = [title];
@@ -400,21 +525,81 @@ export function matchesKeyword(job, keyword, keywordScope = "title_and_descripti
       strictHaystacks.push(description);
     }
 
-    return strictHaystacks.some((haystack) => strictQueries.some((candidate) => matchesCandidateInText(haystack, candidate)));
+    for (const [index, haystack] of strictHaystacks.entries()) {
+      const matchedCandidate = strictQueries.find((candidate) => matchesCandidateInText(haystack, candidate));
+      if (matchedCandidate) {
+        return {
+          matches: true,
+          reason: index === 0 ? "strict_title_match" : "strict_description_match",
+          matchedCandidate,
+          matchedField: index === 0 ? "title" : "description",
+        };
+      }
+    }
+
+    return {
+      matches: false,
+      reason: "strict_no_match",
+      matchedCandidate: null,
+      matchedField: null,
+    };
   }
 
   if (titleFocusedAliasQuery) {
-    return queries.some((candidate) => matchesCandidateLoosely(title, candidate));
+    const matchedCandidate = queries.find((candidate) => matchesCandidateLoosely(title, candidate));
+    if (matchedCandidate) {
+      return {
+        matches: true,
+        reason: "loose_title_alias_match",
+        matchedCandidate,
+        matchedField: "title",
+      };
+    }
+
+    if (query === "product manager" && matchesProductManagerPmContext(title)) {
+      return {
+        matches: true,
+        reason: "loose_title_pm_context_match",
+        matchedCandidate: "pm_with_product_context",
+        matchedField: "title",
+      };
+    }
+
+    return {
+      matches: false,
+      reason: "loose_title_alias_miss",
+      matchedCandidate: null,
+      matchedField: null,
+    };
   }
 
   if (queryWords.length > 1) {
-    return queries.some((candidate) => {
+    for (const candidate of queries) {
       if (matchesCandidateLoosely(title, candidate)) {
-        return true;
+        return {
+          matches: true,
+          reason: "loose_title_match",
+          matchedCandidate: candidate,
+          matchedField: "title",
+        };
       }
 
-      return searchInDescription ? matchesCandidateLoosely(description, candidate) : false;
-    });
+      if (searchInDescription && matchesCandidateLoosely(description, candidate)) {
+        return {
+          matches: true,
+          reason: "loose_description_match",
+          matchedCandidate: candidate,
+          matchedField: "description",
+        };
+      }
+    }
+
+    return {
+      matches: false,
+      reason: searchInDescription ? "loose_multiword_miss" : "loose_title_only_miss",
+      matchedCandidate: null,
+      matchedField: null,
+    };
   }
 
   const haystack = normalizeText(
@@ -426,7 +611,150 @@ export function matchesKeyword(job, keyword, keywordScope = "title_and_descripti
       .join(" ")
   );
 
-  return queries.some((candidate) => matchesCandidateLoosely(haystack, candidate));
+  const matchedCandidate = queries.find((candidate) => matchesCandidateLoosely(haystack, candidate));
+  if (matchedCandidate) {
+    return {
+      matches: true,
+      reason: "loose_combined_match",
+      matchedCandidate,
+      matchedField: searchInDescription ? "title_or_description" : "title",
+    };
+  }
+
+  return {
+    matches: false,
+    reason: "loose_no_match",
+    matchedCandidate: null,
+    matchedField: null,
+  };
+}
+
+export function matchesKeyword(job, keyword, keywordScope = "title_and_description", keywordMode = "strict") {
+  return evaluateKeywordMatch(job, keyword, keywordScope, keywordMode).matches;
+}
+
+export function evaluateLegacyKeywordMatch(job, keyword, keywordScope = "title_and_description", keywordMode = "strict") {
+  if (!keyword) {
+    return {
+      matches: true,
+      reason: "no_keyword",
+      matchedCandidate: null,
+      matchedField: null,
+    };
+  }
+
+  const query = normalizeText(keyword);
+  if (!query) {
+    return {
+      matches: true,
+      reason: "empty_keyword",
+      matchedCandidate: null,
+      matchedField: null,
+    };
+  }
+
+  const queries = expandLegacyKeywordQueries(query);
+  const aliasConfigured = Array.isArray(LEGACY_KEYWORD_ALIASES[query]) && LEGACY_KEYWORD_ALIASES[query].length > 0;
+  const title = normalizeText(job.title);
+  const description = normalizeText(job.searchText || job.descriptionSnippet);
+  const queryWords = query.split(" ").filter(Boolean);
+  const searchInDescription = keywordScope === "title_and_description";
+  const useLooseMatching = keywordMode === "loose";
+  const titleFocusedAliasQuery = aliasConfigured && TITLE_FOCUSED_ALIAS_QUERIES.has(query);
+
+  if (!useLooseMatching) {
+    const strictQueries = [query];
+
+    if (titleFocusedAliasQuery) {
+      const matchedCandidate = strictQueries.find((candidate) => matchesCandidateInText(title, candidate));
+      return {
+        matches: Boolean(matchedCandidate),
+        reason: matchedCandidate ? "strict_title_match" : "strict_title_alias_miss",
+        matchedCandidate: matchedCandidate || null,
+        matchedField: matchedCandidate ? "title" : null,
+      };
+    }
+
+    const strictHaystacks = [title];
+    if (searchInDescription) {
+      strictHaystacks.push(description);
+    }
+
+    for (const [index, haystack] of strictHaystacks.entries()) {
+      const matchedCandidate = strictQueries.find((candidate) => matchesCandidateInText(haystack, candidate));
+      if (matchedCandidate) {
+        return {
+          matches: true,
+          reason: index === 0 ? "strict_title_match" : "strict_description_match",
+          matchedCandidate,
+          matchedField: index === 0 ? "title" : "description",
+        };
+      }
+    }
+
+    return {
+      matches: false,
+      reason: "strict_no_match",
+      matchedCandidate: null,
+      matchedField: null,
+    };
+  }
+
+  if (titleFocusedAliasQuery) {
+    const matchedCandidate = queries.find((candidate) => matchesCandidateLoosely(title, candidate));
+    return {
+      matches: Boolean(matchedCandidate),
+      reason: matchedCandidate ? "loose_title_alias_match" : "loose_title_alias_miss",
+      matchedCandidate: matchedCandidate || null,
+      matchedField: matchedCandidate ? "title" : null,
+    };
+  }
+
+  if (queryWords.length > 1) {
+    for (const candidate of queries) {
+      if (matchesCandidateLoosely(title, candidate)) {
+        return {
+          matches: true,
+          reason: "loose_title_match",
+          matchedCandidate: candidate,
+          matchedField: "title",
+        };
+      }
+
+      if (searchInDescription && matchesCandidateLoosely(description, candidate)) {
+        return {
+          matches: true,
+          reason: "loose_description_match",
+          matchedCandidate: candidate,
+          matchedField: "description",
+        };
+      }
+    }
+
+    return {
+      matches: false,
+      reason: searchInDescription ? "loose_multiword_miss" : "loose_title_only_miss",
+      matchedCandidate: null,
+      matchedField: null,
+    };
+  }
+
+  const haystack = normalizeText(
+    [
+      job.title,
+      searchInDescription ? (job.searchText || job.descriptionSnippet) : null,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  const matchedCandidate = queries.find((candidate) => matchesCandidateLoosely(haystack, candidate));
+  return {
+    matches: Boolean(matchedCandidate),
+    reason: matchedCandidate ? "loose_combined_match" : "loose_no_match",
+    matchedCandidate: matchedCandidate || null,
+    matchedField: matchedCandidate ? (searchInDescription ? "title_or_description" : "title") : null,
+  };
 }
 
 function containsSearchPhrase(haystack, phrase) {
@@ -514,6 +842,38 @@ function expandKeywordQueries(query) {
   const aliases = KEYWORD_ALIASES[query];
   const values = Array.isArray(aliases) && aliases.length > 0 ? aliases : [query];
   return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
+}
+
+function expandLegacyKeywordQueries(query) {
+  const aliases = LEGACY_KEYWORD_ALIASES[query];
+  const values = Array.isArray(aliases) && aliases.length > 0 ? aliases : [query];
+  return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
+}
+
+function matchesProductManagerPmContext(title) {
+  const normalizedTitle = normalizeText(title);
+  if (!normalizedTitle || !containsWholeWord(normalizedTitle, "pm")) {
+    return false;
+  }
+
+  const hasProductContext = containsWholeWord(normalizedTitle, "product")
+    || containsWholeWord(normalizedTitle, "platform")
+    || containsSearchPhrase(normalizedTitle, "product ops")
+    || containsSearchPhrase(normalizedTitle, "product operations");
+
+  if (!hasProductContext) {
+    return false;
+  }
+
+  return !containsWholeWord(normalizedTitle, "project") && !containsWholeWord(normalizedTitle, "program");
+}
+
+export function expandKeywordQueriesForSearch(keyword) {
+  const query = normalizeText(keyword);
+  if (!query) {
+    return [];
+  }
+  return expandKeywordQueries(query);
 }
 
 export function isLikelyJobPosting(job) {
@@ -635,6 +995,17 @@ export function isLikelyJobPosting(job) {
     return false;
   }
 
+  const blockedDescriptionPatterns = [
+    /\bjoin our talent community\b/i,
+    /\bstay connected with\b/i,
+    /\bbe first to hear about new roles\b/i,
+    /\bnever miss an opportunity\b/i,
+  ];
+
+  if (blockedDescriptionPatterns.some((pattern) => pattern.test(description))) {
+    return false;
+  }
+
   return true;
 }
 
@@ -671,22 +1042,21 @@ function hasConcreteRoleTitle(title) {
 }
 
 export function matchesRecency(job, recencyKey) {
-  const normalizedRecencyKey = normalizeRecencyKey(recencyKey);
-  if (!normalizedRecencyKey || !RECENCY_WINDOWS[normalizedRecencyKey]) {
+  return evaluateRecency(job, recencyKey).matches;
+}
+
+export function isExpiredJob(job) {
+  const deadline = parseDate(job?.applicationDeadlineAt);
+  if (!deadline) {
+    return false;
+  }
+
+  const now = new Date();
+  if (deadline.getFullYear() < now.getFullYear()) {
     return true;
   }
 
-  const candidateDate = job.postedAt || job.updatedAt;
-  if (!candidateDate) {
-    return false;
-  }
-
-  const timestamp = new Date(candidateDate).getTime();
-  if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    return false;
-  }
-
-  return Date.now() - timestamp <= RECENCY_WINDOWS[normalizedRecencyKey];
+  return deadline.getTime() < now.getTime();
 }
 
 function normalizeRecencyKey(value) {
@@ -711,6 +1081,31 @@ function normalizeRecencyKey(value) {
   return aliases[key] || "";
 }
 
+function hasMeaningfulDateInput(value) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime());
+  }
+  const text = String(value).trim();
+  return Boolean(text);
+}
+
+function inferResolvedDateStatus({ explicitStatus, postedDate, updatedDate, firstSeenDate }) {
+  const normalizedExplicit = String(explicitStatus || "").trim().toLowerCase();
+  if (postedDate) {
+    return "posted";
+  }
+  if (firstSeenDate) {
+    return normalizedExplicit === "updated" ? "updated" : "first_seen";
+  }
+  if (updatedDate) {
+    return "updated";
+  }
+  return normalizedExplicit || "unknown";
+}
+
 export function inferWorkArrangement(text) {
   const value = (text || "").toLowerCase();
 
@@ -718,12 +1113,41 @@ export function inferWorkArrangement(text) {
     return "unknown";
   }
 
-  if (value.includes("remote")) {
-    return value.includes("hybrid") ? "hybrid" : "remote";
+  const onsiteSignals = [
+    /\bin-?office full time\b/,
+    /\bfull time in (?:the )?office\b/,
+    /\bmust be in (?:the )?office\b/,
+    /\bexpected to be in (?:the )?office\b/,
+    /\brequired to be in (?:the )?office\b/,
+    /\bability to be in-?office\b/,
+    /\bon-?site full time\b/,
+    /\bfull time on-?site\b/,
+  ];
+  const hybridSignals = [
+    /\bhybrid\b/,
+    /\bflexible work model\b/,
+    /\bflexible workplace\b/,
+    /\bflexible working model\b/,
+    /\bwork model\b[\s\S]{0,80}\boffice/,
+    /\b(?:\d+|one|two|three|four|five)\s*x\s*\/?\s*(?:wk|week)\b[\s\S]{0,40}\boffice/,
+    /\b(?:\d+|one|two|three|four|five)\s+days?\s+(?:per|a)\s+week\b[\s\S]{0,40}\boffice/,
+    /\bat our [a-z .'-]+\s+office\b/,
+    /\bin-?office expectation\b/,
+    /\bsome in-?office\b/,
+    /\bpartly in office\b/,
+    /\bsplit time between\b[\s\S]{0,40}\boffice/,
+  ];
+
+  if (onsiteSignals.some((pattern) => pattern.test(value))) {
+    return "onsite";
   }
 
-  if (value.includes("hybrid")) {
+  if (hybridSignals.some((pattern) => pattern.test(value))) {
     return "hybrid";
+  }
+
+  if (value.includes("remote")) {
+    return value.includes("office") || value.includes("onsite") || value.includes("on-site") ? "hybrid" : "remote";
   }
 
   if (value.includes("on-site") || value.includes("onsite") || value.includes("office")) {
@@ -839,8 +1263,55 @@ function extractJobIdFromUrlValue(value) {
     return "";
   }
 
-  const match = raw.match(/\b([A-Z]+-\d+(?:-\d+)?)\b/i);
-  return match?.[1] || "";
+  try {
+    const url = new URL(raw);
+    const queryCandidates = [
+      url.searchParams.get("req"),
+      url.searchParams.get("jobId"),
+      url.searchParams.get("jobid"),
+      url.searchParams.get("reqId"),
+      url.searchParams.get("requisitionId"),
+      url.searchParams.get("jid"),
+      url.searchParams.get("job"),
+    ];
+
+    for (const candidate of queryCandidates) {
+      const canonical = canonicalizeJobIdCandidate(candidate);
+      if (canonical) {
+        return canonical;
+      }
+    }
+
+    const pathMatches = [
+      url.pathname.match(/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i),
+      url.pathname.match(/\/position\/(\d{4,})(?:\/|$)/i),
+      url.pathname.match(/\/jobs\/(\d{4,})(?:\/|$)/i),
+      url.pathname.match(/\/job\/([A-Z0-9]{6,12})(?:\/|$)/i),
+      url.pathname.match(/\b([A-Z]+-\d+(?:-\d+)?|[A-Z]\d+(?:-\d+)?)\b/i),
+    ];
+
+    for (const match of pathMatches) {
+      const canonical = canonicalizeJobIdCandidate(match?.[1] || "");
+      if (canonical) {
+        return canonical;
+      }
+    }
+  } catch {}
+
+  const rawPathMatches = [
+    raw.match(/\/position\/(\d{4,})(?:\/|$)/i),
+    raw.match(/\/jobs\/(\d{4,})(?:\/|$)/i),
+    raw.match(/\/job\/([A-Z0-9]{6,12})(?:\/|$)/i),
+  ];
+  for (const match of rawPathMatches) {
+    const canonical = canonicalizeJobIdCandidate(match?.[1] || "");
+    if (canonical) {
+      return canonical;
+    }
+  }
+
+  const match = raw.match(/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Z]+-\d+(?:-\d+)?|[A-Z]\d+(?:-\d+)?|[A-Z0-9]{6,12}|\d{4,})\b/i);
+  return canonicalizeJobIdCandidate(match?.[1] || "");
 }
 
 function canonicalizeJobIdCandidate(value) {
@@ -849,12 +1320,21 @@ function canonicalizeJobIdCandidate(value) {
     return "";
   }
 
-  const directMatch = raw.match(/\b([A-Z]+-\d+(?:-\d+)?)\b/i);
+  const directMatch = raw.match(/\b([A-Z]+-\d+(?:-\d+)?|[A-Z]\d+(?:-\d+)?)\b/i);
   if (directMatch?.[1]) {
     return stripVariantSuffix(directMatch[1]);
   }
 
-  if (/^\d{5,}$/.test(raw)) {
+  if (/^[A-Z0-9]{6,12}$/i.test(raw) && /[A-Z]/i.test(raw) && /\d/.test(raw)) {
+    return raw.toUpperCase();
+  }
+
+  const uuidMatch = raw.match(/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i);
+  if (uuidMatch?.[1]) {
+    return uuidMatch[1].toLowerCase();
+  }
+
+  if (/^\d{4,}$/.test(raw)) {
     return raw;
   }
 
@@ -863,7 +1343,7 @@ function canonicalizeJobIdCandidate(value) {
 
 function stripVariantSuffix(value) {
   const normalized = String(value || "").trim().toUpperCase();
-  const match = normalized.match(/^([A-Z]+-\d+)(?:-\d+)?$/);
+  const match = normalized.match(/^([A-Z]+-\d+|[A-Z]\d+)(?:-\d+)?$/);
   return match?.[1] || normalized;
 }
 

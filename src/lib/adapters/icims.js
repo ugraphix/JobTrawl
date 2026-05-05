@@ -3,13 +3,21 @@ import {
   buildNormalizedJob,
   cleanText,
   decodeHtmlEntities,
+  deriveLocationMetadata,
   deriveTitleFromUrl,
+  fetchDescriptionFallback,
+  extractPostedDateFromHtml,
   fetchJson,
   fetchText,
+  mapWithConcurrency,
+  recordLiveFetchAuditSummary,
   safeText,
 } from "./shared.js";
 
 const MAX_ICIMS_PAGES = 8;
+const ICIMS_DETAIL_CONCURRENCY = 3;
+const ICIMS_DETAIL_MAX_JOBS = 120;
+const ICIMS_LEGACY_MODE = String(process.env.JOBTRAWL_ICIMS_LEGACY_MODE || "").trim().toLowerCase() === "true";
 
 export async function fetchICimsJobs(source, filters = {}) {
   const customerId = source.customerId;
@@ -33,6 +41,10 @@ async function fetchAuthenticatedICimsJobs(source, customerId, portal, username,
   });
 
   const jobs = Array.isArray(payload.searchResults) ? payload.searchResults : [];
+  recordLiveFetchAuditSummary({
+    rawJobCount: jobs.length,
+    rawJobCountBasis: "icims_authenticated_searchresults",
+  });
 
   return jobs.map((job, index) => {
     const portalUrl = job.portalUrl || job.applyUrl || job.url;
@@ -50,6 +62,116 @@ async function fetchAuthenticatedICimsJobs(source, customerId, portal, username,
 }
 
 async function fetchPublicICimsJobs(source, filters) {
+  if (ICIMS_LEGACY_MODE) {
+    return fetchLegacyPublicICimsJobs(source, filters);
+  }
+
+  const searchUrl = resolveICimsSearchUrl(source, filters);
+  const wrapperHtml = await fetchText(searchUrl);
+  const visitedShapes = [];
+  const visitedApiHints = new Set();
+  let pageUrl = extractICimsIframeUrlFromHtml(wrapperHtml, searchUrl);
+  const jobs = [];
+  const seenPageUrls = new Set();
+  const seenJobUrls = new Set();
+  let parserGap = false;
+  let shellOnly = false;
+  let usedRedirectTarget = false;
+
+  for (let page = 0; page < MAX_ICIMS_PAGES; page += 1) {
+    const normalizedPageUrl = normalizeICimsPageUrl(pageUrl, { preferIframe: true });
+    if (!normalizedPageUrl || seenPageUrls.has(normalizedPageUrl)) {
+      break;
+    }
+
+    seenPageUrls.add(normalizedPageUrl);
+    const pageHtml = await fetchText(normalizedPageUrl);
+    const pageInspection = inspectICimsSearchPage(pageHtml, normalizedPageUrl);
+    visitedShapes.push({
+      url: normalizedPageUrl,
+      pageType: pageInspection.pageType,
+      jobCardCount: pageInspection.jobCardCount,
+      jsonLdJobCount: pageInspection.jsonLdJobs.length,
+      embeddedJobCount: pageInspection.embeddedJobs.length,
+      redirectTarget: pageInspection.redirectTarget || null,
+      hasPagination: pageInspection.hasPagination,
+      isGeoGated: pageInspection.isGeoGated,
+      isShellOnly: pageInspection.isShellOnly,
+      explicitEmpty: pageInspection.explicitEmpty,
+    });
+    for (const apiUrl of pageInspection.apiHints) {
+      visitedApiHints.add(apiUrl);
+    }
+
+    let batch = extractICimsSearchResults(source, pageHtml, normalizedPageUrl);
+    if (batch.length === 0 && pageInspection.jsonLdJobs.length > 0) {
+      batch = buildICimsJobsFromStructuredEntries(source, pageInspection.jsonLdJobs, normalizedPageUrl);
+    }
+    if (batch.length === 0 && pageInspection.embeddedJobs.length > 0) {
+      batch = buildICimsJobsFromStructuredEntries(source, pageInspection.embeddedJobs, normalizedPageUrl);
+    }
+
+    if (
+      batch.length === 0
+      && pageInspection.redirectTarget
+      && !seenPageUrls.has(pageInspection.redirectTarget)
+    ) {
+      usedRedirectTarget = true;
+      pageUrl = pageInspection.redirectTarget;
+      shellOnly = pageInspection.isShellOnly;
+      parserGap = pageInspection.isShellOnly || pageInspection.isGeoGated || pageInspection.pageType === "js_shell";
+      continue;
+    }
+
+    for (const job of batch) {
+      if (!job.applyUrl || seenJobUrls.has(job.applyUrl)) {
+        continue;
+      }
+      seenJobUrls.add(job.applyUrl);
+      jobs.push(job);
+    }
+
+    const nextPageUrl = extractICimsNextPageUrlFromHtml(pageHtml, normalizedPageUrl);
+    if (!nextPageUrl) {
+      shellOnly = shellOnly || pageInspection.isShellOnly;
+      parserGap = parserGap || (
+        batch.length === 0
+        && (pageInspection.isShellOnly || pageInspection.isGeoGated || pageInspection.pageType === "embedded_json")
+        && !pageInspection.explicitEmpty
+      );
+      break;
+    }
+
+    pageUrl = nextPageUrl;
+  }
+
+  const keyword = String(filters?.keyword || "").trim();
+  const detailJobs = source.fetchIcimsDetails !== false
+    ? prioritizeICimsDetailJobs(jobs, keyword)
+    : [];
+
+  if (detailJobs.length > 0) {
+    await enrichICimsDescriptions(detailJobs);
+  }
+
+  recordLiveFetchAuditSummary({
+    rawJobCount: jobs.length,
+    rawJobCountBasis: "icims_public_search_html_results",
+    icimsSearchUrl: searchUrl,
+    icimsVisitedShapes: visitedShapes,
+    icimsApiHints: [...visitedApiHints].slice(0, 20),
+    icimsShellOnly: shellOnly,
+    icimsParserGap: parserGap,
+    icimsUsedRedirectTarget: usedRedirectTarget,
+    icimsPrimaryPageType: visitedShapes.find((entry) => entry.jobCardCount > 0 || entry.embeddedJobCount > 0 || entry.jsonLdJobCount > 0)?.pageType
+      || visitedShapes[visitedShapes.length - 1]?.pageType
+      || "unknown_html",
+  });
+
+  return jobs;
+}
+
+async function fetchLegacyPublicICimsJobs(source, filters) {
   const searchUrl = resolveICimsSearchUrl(source, filters);
   const wrapperHtml = await fetchText(searchUrl);
   let pageUrl = extractICimsIframeUrlFromHtml(wrapperHtml, searchUrl);
@@ -58,7 +180,7 @@ async function fetchPublicICimsJobs(source, filters) {
   const seenJobUrls = new Set();
 
   for (let page = 0; page < MAX_ICIMS_PAGES; page += 1) {
-    const normalizedPageUrl = ensureICimsIframeUrl(pageUrl);
+    const normalizedPageUrl = normalizeICimsPageUrl(pageUrl, { preferIframe: true });
     if (!normalizedPageUrl || seenPageUrls.has(normalizedPageUrl)) {
       break;
     }
@@ -82,6 +204,22 @@ async function fetchPublicICimsJobs(source, filters) {
 
     pageUrl = nextPageUrl;
   }
+
+  const keyword = String(filters?.keyword || "").trim();
+  const detailJobs = source.fetchIcimsDetails !== false
+    ? prioritizeICimsDetailJobs(jobs, keyword)
+    : [];
+
+  if (detailJobs.length > 0) {
+    await enrichICimsDescriptions(detailJobs);
+  }
+
+  recordLiveFetchAuditSummary({
+    rawJobCount: jobs.length,
+    rawJobCountBasis: "icims_public_search_html_results_legacy",
+    icimsSearchUrl: searchUrl,
+    icimsLegacyMode: true,
+  });
 
   return jobs;
 }
@@ -115,23 +253,32 @@ function buildSearchLocation(filters) {
   return [area, state].filter(Boolean).join(", ");
 }
 
-function ensureICimsIframeUrl(urlValue) {
+function normalizeICimsPageUrl(urlValue, { preferIframe = false } = {}) {
   if (!urlValue) {
     return null;
   }
 
   try {
     const parsed = new URL(urlValue);
-    if (!parsed.pathname.includes("/jobs/search")) {
-      parsed.pathname = "/jobs/search";
-    }
-    if (!parsed.searchParams.has("ss")) {
-      parsed.searchParams.set("ss", "1");
+    if (/icims\.com$/i.test(parsed.hostname) || /\.icims\.com$/i.test(parsed.hostname)) {
+      if (!parsed.pathname.includes("/jobs/search")) {
+        parsed.pathname = "/jobs/search";
+      }
+      if (!parsed.searchParams.has("ss")) {
+        parsed.searchParams.set("ss", "1");
+      }
+      if (preferIframe && !parsed.searchParams.has("in_iframe")) {
+        parsed.searchParams.set("in_iframe", "1");
+      }
     }
     return parsed.toString();
   } catch {
     return urlValue;
   }
+}
+
+function ensureICimsIframeUrl(urlValue) {
+  return normalizeICimsPageUrl(urlValue, { preferIframe: false });
 }
 
 function extractICimsIframeUrlFromHtml(pageHtml, baseUrl) {
@@ -162,11 +309,11 @@ function extractICimsIframeUrlFromHtml(pageHtml, baseUrl) {
     }
 
     if (candidate) {
-      return ensureICimsIframeUrl(candidate);
+      return normalizeICimsPageUrl(candidate, { preferIframe: false });
     }
   }
 
-  return ensureICimsIframeUrl(baseUrl);
+  return normalizeICimsPageUrl(baseUrl, { preferIframe: false });
 }
 
 function extractICimsNextPageUrlFromHtml(pageHtml, currentUrl) {
@@ -196,11 +343,68 @@ function extractICimsNextPageUrlFromHtml(pageHtml, currentUrl) {
     }
 
     if (candidate) {
-      return ensureICimsIframeUrl(candidate);
+      return normalizeICimsPageUrl(candidate, { preferIframe: true });
     }
   }
 
   return null;
+}
+
+function inspectICimsSearchPage(pageHtml, requestUrl) {
+  const source = String(pageHtml || "");
+  const jsonLdJobs = extractICimsStructuredJobsFromJsonLd(source, requestUrl);
+  const embeddedJobs = extractICimsStructuredJobsFromEmbeddedState(source, requestUrl);
+  const redirectTarget = extractICimsRedirectTargetFromHtml(source, requestUrl);
+  const apiHints = extractICimsApiHints(source);
+  const jobCardCount = (source.match(/<li[^>]*class=["'][^"']*iCIMS_JobCardItem[^"']*["'][^>]*>/gi) || []).length;
+  const hasPagination = Boolean(source.match(/<link[^>]*rel=["']next["'][^>]*href=/i));
+  const hasShellMarkers = /<base href="\/careers-home|window\._jibe|app\.jibecdn\.com\/prod\/search|id="ng-app"|<app-root|data-jibe-search-version/i.test(source);
+  const isGeoGated = /permission to access your location has been denied|location information has yet to be received/i.test(source);
+  const explicitEmpty = /no current job openings|there are no job openings|sorry,\s*we have no current job openings/i.test(source);
+
+  let pageType = "unknown_html";
+  if (jobCardCount > 0) {
+    pageType = "static_html";
+  } else if (jsonLdJobs.length > 0) {
+    pageType = "json_ld";
+  } else if (embeddedJobs.length > 0) {
+    pageType = "embedded_json";
+  } else if (hasShellMarkers || redirectTarget) {
+    pageType = "js_shell";
+  } else if (isGeoGated) {
+    pageType = "geo_gated";
+  } else if (explicitEmpty) {
+    pageType = "empty_board";
+  }
+
+  return {
+    pageType,
+    redirectTarget,
+    apiHints,
+    hasPagination,
+    isGeoGated,
+    explicitEmpty,
+    isShellOnly: Boolean((hasShellMarkers || redirectTarget) && jobCardCount === 0 && jsonLdJobs.length === 0 && embeddedJobs.length === 0),
+    jobCardCount,
+    jsonLdJobs,
+    embeddedJobs,
+  };
+}
+
+function extractICimsRedirectTargetFromHtml(sourceHtml, baseUrl) {
+  const source = String(sourceHtml || "");
+  const match = source.match(/window\.top\.location\.href\s*=\s*['"]([^'"]+)['"]/i);
+  const raw = String(match?.[1] || "").trim();
+  if (!raw) {
+    return null;
+  }
+  return absoluteUrl(decodeHtmlEntities(raw).replace(/\\\//g, "/"), baseUrl);
+}
+
+function extractICimsApiHints(sourceHtml) {
+  const source = String(sourceHtml || "");
+  const matches = source.match(/https?:\/\/[^"'\s>]+|\/api\/[A-Za-z0-9_./?=&-]+/g) || [];
+  return [...new Set(matches.filter((value) => /api|job|search|career/i.test(value)))];
 }
 
 function extractICimsSearchResults(source, html, requestUrl) {
@@ -245,6 +449,172 @@ function extractICimsSearchResults(source, html, requestUrl) {
   return jobs;
 }
 
+function extractICimsStructuredJobsFromJsonLd(sourceHtml, requestUrl) {
+  const source = String(sourceHtml || "");
+  const matches = [...source.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  const jobs = [];
+
+  for (const match of matches) {
+    const raw = String(match?.[1] || "").trim();
+    if (!raw) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(decodeHtmlEntities(raw));
+      collectICimsStructuredJobs(parsed, requestUrl, jobs);
+    } catch {
+      // ignore malformed JSON-LD
+    }
+  }
+
+  return jobs;
+}
+
+function extractICimsStructuredJobsFromEmbeddedState(sourceHtml, requestUrl) {
+  const source = String(sourceHtml || "");
+  const matches = [...source.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)];
+  const jobs = [];
+  const seenRawJobs = new Set();
+
+  for (const match of matches) {
+    const body = String(match?.[1] || "");
+    if (!body || !/(jobposting|jobtitle|employment_type|jobid|searchresults)/i.test(body)) {
+      continue;
+    }
+
+    const objectMatches = [
+      ...body.matchAll(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]*?});/gi),
+      ...body.matchAll(/window\.__APOLLO_STATE__\s*=\s*({[\s\S]*?});/gi),
+      ...body.matchAll(/window\._jibe(?:\.[A-Za-z0-9_]+)?\s*=\s*({[\s\S]*?});/gi),
+    ];
+
+    for (const objectMatch of objectMatches) {
+      const rawObject = String(objectMatch?.[1] || "").trim();
+      if (!rawObject || seenRawJobs.has(rawObject)) {
+        continue;
+      }
+      seenRawJobs.add(rawObject);
+      try {
+        const parsed = JSON.parse(rawObject);
+        collectICimsStructuredJobs(parsed, requestUrl, jobs);
+      } catch {
+        // ignore invalid embedded state blocks
+      }
+    }
+  }
+
+  return jobs;
+}
+
+function collectICimsStructuredJobs(value, requestUrl, jobs, seen = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectICimsStructuredJobs(item, requestUrl, jobs, seen);
+    }
+    return;
+  }
+
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  const type = String(value["@type"] || "").toLowerCase();
+  const title = safeText(
+    value.title
+      || value.jobTitle
+      || value.name
+      || value.positionTitle,
+    220
+  );
+  const applyUrl = absoluteUrl(
+    value.applyUrl
+      || value.portalUrl
+      || value.url
+      || value.jobUrl
+      || value.canonicalUrl,
+    requestUrl
+  );
+
+  if (
+    (type === "jobposting" || /job/i.test(type) || title)
+    && applyUrl
+    && title
+    && !applyUrl.toLowerCase().includes("/jobs/intro")
+    && !applyUrl.toLowerCase().includes("/jobs/login")
+  ) {
+    const dedupeKey = `${title.toLowerCase()}|${applyUrl.toLowerCase()}`;
+    if (!seen.has(dedupeKey)) {
+      seen.add(dedupeKey);
+      const locationLabel = buildICimsStructuredLocationLabel(value);
+      jobs.push({
+        id: value.id || value.jobId || value.reqId || applyUrl,
+        title,
+        applyUrl,
+        locationLabel,
+        rawLocationText: locationLabel || null,
+        postedAt: value.datePosted || value.postedAt || value.updatedAt || value.publishedAt || null,
+        employmentType: value.employmentType || value.jobType || value.type || null,
+        department: value.department || value.category || null,
+        descriptionSnippet: safeText(
+          value.description
+            || value.summary
+            || value.snippet
+            || value.teaser,
+          220
+        ),
+        city: String(value.city || value.locationCity || value.addressLocality || "").trim() || null,
+        region: String(value.region || value.state || value.addressRegion || "").trim() || null,
+        country: String(value.country || value.addressCountry || "").trim() || null,
+      });
+    }
+  }
+
+  for (const nested of Object.values(value)) {
+    if (Array.isArray(nested)) {
+      collectICimsStructuredJobs(nested, requestUrl, jobs, seen);
+    } else if (nested && typeof nested === "object") {
+      collectICimsStructuredJobs(nested, requestUrl, jobs, seen);
+    }
+  }
+}
+
+function buildICimsJobsFromStructuredEntries(source, entries, requestUrl) {
+  return (Array.isArray(entries) ? entries : []).map((entry, index) => {
+    const locationLabel = String(entry.locationLabel || "").trim() || "Unspecified";
+    return buildNormalizedJob(source, {
+      id: entry.id || entry.applyUrl || `${source.key}-${index}`,
+      company: source.company,
+      title: entry.title || deriveTitleFromUrl(entry.applyUrl) || `iCIMS job ${index + 1}`,
+      department: entry.department || null,
+      employmentType: entry.employmentType || null,
+      locationLabel,
+      postedAt: entry.postedAt || null,
+      rawLocationText: entry.rawLocationText || locationLabel,
+      applyUrl: absoluteUrl(entry.applyUrl, requestUrl),
+      descriptionSnippet: entry.descriptionSnippet || null,
+      city: entry.city || null,
+      region: entry.region || null,
+      country: entry.country || null,
+    });
+  }).filter((job) => job?.applyUrl);
+}
+
+function buildICimsStructuredLocationLabel(value) {
+  const address = value?.jobLocation?.address || value?.address || {};
+  const parts = [
+    value.locationLabel,
+    value.location,
+    value.locationName,
+    value.jobLocationName,
+    address.addressLocality,
+    address.addressRegion,
+    address.addressCountry,
+  ]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  return parts.length > 0 ? [...new Set(parts)].join(", ") : "";
+}
+
 function extractICimsPostingDateFromHtml(sourceHtml) {
   const source = String(sourceHtml || "");
   const match = source.match(
@@ -255,4 +625,211 @@ function extractICimsPostingDateFromHtml(sourceHtml) {
     return withTitle;
   }
   return safeText(match?.[2], 80) || null;
+}
+
+async function enrichICimsDescriptions(jobs) {
+  await mapWithConcurrency(jobs, ICIMS_DETAIL_CONCURRENCY, async (job) => {
+    if (!job?.applyUrl) {
+      return job;
+    }
+
+    const fallback = await fetchDescriptionFallback(job.applyUrl);
+    let detailHtml = "";
+    if (fallback.descriptionSnippet || fallback.searchText) {
+      job.descriptionSnippet = fallback.descriptionSnippet || job.descriptionSnippet || null;
+      job.searchText = fallback.searchText || fallback.descriptionSnippet || job.searchText || null;
+    }
+    if (!job.postedAt && fallback.postedAt) {
+      job.postedAt = fallback.postedAt;
+    }
+    if (!job.applicationDeadlineAt && fallback.applicationDeadlineAt) {
+      job.applicationDeadlineAt = fallback.applicationDeadlineAt;
+    }
+    if (!job.compensation && fallback.compensation) {
+      job.compensation = fallback.compensation;
+    }
+    if ((!job.workArrangement || job.workArrangement === "unknown") && fallback.workArrangement) {
+      job.workArrangement = fallback.workArrangement;
+    }
+    if (shouldReplaceExternalId(job.externalId, fallback.jobId)) {
+      job.externalId = fallback.jobId;
+    }
+
+    const needsDetailMetadata = !job.postedAt
+      || !job.country
+      || !job.city
+      || !job.region
+      || isPollutedICimsLocation(job.locationLabel)
+      || String(job.locationLabel || "").trim().toLowerCase() === "unspecified";
+
+    if (needsDetailMetadata) {
+      detailHtml = await fetchText(job.applyUrl).catch(() => "");
+      const detailMetadata = extractICimsDetailMetadata(detailHtml);
+      if (!job.postedAt && detailMetadata.postedAt) {
+        job.postedAt = detailMetadata.postedAt;
+      }
+      if ((!job.locationLabel || job.locationLabel === "Unspecified" || isPollutedICimsLocation(job.locationLabel))
+        && detailMetadata.locationLabel) {
+        job.locationLabel = detailMetadata.locationLabel;
+      }
+      if ((!job.rawLocationText || job.rawLocationText === "Unspecified") && detailMetadata.rawLocationText) {
+        job.rawLocationText = detailMetadata.rawLocationText;
+      }
+      if (!job.country && detailMetadata.country) {
+        job.country = detailMetadata.country;
+      }
+      if (!job.city && detailMetadata.city) {
+        job.city = detailMetadata.city;
+      }
+      if (!job.region && detailMetadata.region) {
+        job.region = detailMetadata.region;
+      }
+    }
+
+    const derivedLocation = deriveLocationMetadata({
+      title: job.title,
+      applyUrl: job.applyUrl,
+      locationLabel: job.locationLabel,
+      rawLocationText: [job.rawLocationText, fallback.searchText, fallback.descriptionSnippet].filter(Boolean).join(" | "),
+      searchText: fallback.searchText,
+      descriptionSnippet: fallback.descriptionSnippet,
+    });
+    if (
+      (!job.locationLabel || job.locationLabel === "Unspecified" || !job.country || !job.city || !job.region)
+      && derivedLocation.locationLabel
+    ) {
+      job.locationLabel = job.locationLabel && job.locationLabel !== "Unspecified"
+        ? job.locationLabel
+        : (derivedLocation.locationLabel || job.locationLabel);
+      job.city = job.city || derivedLocation.city || null;
+      job.region = job.region || derivedLocation.region || null;
+      job.country = job.country || derivedLocation.country || null;
+      job.rawLocationText = derivedLocation.rawLocationText || job.rawLocationText || null;
+    }
+
+    return job;
+  });
+}
+
+function prioritizeICimsDetailJobs(jobs, keyword) {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return [];
+  }
+
+  if (keyword) {
+    return jobs;
+  }
+
+  return [...jobs]
+    .sort((left, right) => {
+      const leftNeedsMetadata = needsICimsDetailEnrichment(left) ? 1 : 0;
+      const rightNeedsMetadata = needsICimsDetailEnrichment(right) ? 1 : 0;
+      if (leftNeedsMetadata !== rightNeedsMetadata) {
+        return rightNeedsMetadata - leftNeedsMetadata;
+      }
+      return String(left?.title || "").localeCompare(String(right?.title || ""));
+    })
+    .slice(0, ICIMS_DETAIL_MAX_JOBS);
+}
+
+function needsICimsDetailEnrichment(job) {
+  if (!job) {
+    return false;
+  }
+  return (
+    !job.postedAt
+    || !job.country
+    || !job.city
+    || String(job.locationLabel || "").trim().toLowerCase() === "unspecified"
+    || isPollutedICimsLocation(job.locationLabel)
+    || !job.descriptionSnippet
+  );
+}
+
+function extractICimsDetailMetadata(html) {
+  const source = String(html || "");
+  if (!source) {
+    return {
+      postedAt: null,
+      locationLabel: null,
+      rawLocationText: null,
+      city: null,
+      region: null,
+      country: null,
+    };
+  }
+
+  const jsonLdMatches = [...source.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  for (const match of jsonLdMatches) {
+    try {
+      const parsed = JSON.parse(decodeHtmlEntities(match[1] || "").trim());
+      const normalized = Array.isArray(parsed) ? parsed : [parsed];
+      for (const entry of normalized) {
+        if (!entry || String(entry["@type"] || "").toLowerCase() !== "jobposting") {
+          continue;
+        }
+        const address = Array.isArray(entry.jobLocation)
+          ? entry.jobLocation[0]?.address
+          : entry.jobLocation?.address;
+        const parts = [
+          address?.addressLocality,
+          address?.addressRegion,
+          address?.addressCountry,
+        ].filter(Boolean);
+        return {
+          postedAt: extractPostedDateFromHtml(source) || String(entry.datePosted || "").trim() || null,
+          locationLabel: parts.length > 0 ? parts.join(", ") : null,
+          rawLocationText: parts.length > 0 ? parts.join(", ") : null,
+          city: String(address?.addressLocality || "").trim() || null,
+          region: String(address?.addressRegion || "").trim() || null,
+          country: String(address?.addressCountry || "").trim() || null,
+        };
+      }
+    } catch {
+      // ignore invalid JSON-LD blocks
+    }
+  }
+
+  return {
+    postedAt: extractPostedDateFromHtml(source),
+    locationLabel: null,
+    rawLocationText: null,
+    city: null,
+    region: null,
+    country: null,
+  };
+}
+
+function isPollutedICimsLocation(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return false;
+  }
+
+  return text.length > 180
+    || /\b(?:overview|responsibilities|requirements|please enable cookies|welcome page|returning candidate|full time|permanent location)\b/i.test(text);
+}
+
+function shouldReplaceExternalId(currentValue, nextValue) {
+  const current = String(currentValue || "").trim();
+  const next = String(nextValue || "").trim();
+  if (!next) {
+    return false;
+  }
+  if (!current || /^https?:/i.test(current)) {
+    return true;
+  }
+  if (current === next) {
+    return false;
+  }
+  if (/^\d{4,}$/.test(current) && /^[A-Za-z]+-\d+(?:-\d+)?$/i.test(next)) {
+    return true;
+  }
+  if (/^\d{4,}$/.test(current) && /^\d{4,}-\d{4,}$/.test(next)) {
+    return true;
+  }
+  if (current.length < next.length && next.includes(current)) {
+    return true;
+  }
+  return false;
 }

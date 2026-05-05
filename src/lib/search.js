@@ -1,5 +1,5 @@
 import { fetchJobsForSource } from "./adapters/index.js";
-import { fetchDescriptionFallback, hasUsableDescriptionText } from "./adapters/shared.js";
+import { deriveEmployerCompany, deriveLocationMetadata, fetchDescriptionFallback, hasUsableDescriptionText } from "./adapters/shared.js";
 import {
   calculateJobDistanceMiles,
   buildJobContentSignature,
@@ -7,7 +7,12 @@ import {
   buildJobListingKey,
   extractCanonicalJobId,
   hasSpecifiedLocation,
+  inferWorkArrangement,
+  isExpiredJob,
   isLikelyJobPosting,
+  evaluateRecency,
+  evaluateKeywordMatch,
+  evaluateLegacyKeywordMatch,
   matchesKeyword,
   matchesLocationGroups,
   matchesRecency,
@@ -18,10 +23,11 @@ import {
 } from "./filters.js";
 
 const DESCRIPTION_ENRICH_CONCURRENCY = 8;
-const MAX_DESCRIPTION_ENRICH_JOBS = 30;
+const MAX_DESCRIPTION_ENRICH_JOBS = 60;
+const MAX_BROAD_SEARCH_DESCRIPTION_ENRICH_JOBS = 12;
 const DESCRIPTION_ENRICH_TIMEOUT_MS = 3500;
 
-export async function searchJobs({ sources, filters, sourceResultsOverride }) {
+export async function searchJobs({ sources, filters, sourceResultsOverride, skipDescriptionEnrichment = false }) {
   const sourceResults = sourceResultsOverride || await Promise.all(
     sources.map(async (source) => {
       try {
@@ -33,10 +39,12 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
     })
   );
 
+  const includedCompanies = new Set((filters.includedCompanies || []).map((name) => normalizeText(name)));
   const excludedCompanies = new Set((filters.excludedCompanies || []).map((name) => name.toLowerCase()));
   const selectedArrangements = new Set((filters.arrangements || []).map((value) => normalizeWorkArrangement(value)));
   const maxDistanceMiles = Number(filters.distanceMiles);
   const useDistanceFilter = Number.isFinite(maxDistanceMiles) && maxDistanceMiles > 0 && filters.userCoordinates;
+  const hasManualLocationFilter = hasActiveLocationGroups(filters.locationGroups);
   const matchedCounts = new Map(sourceResults.map((result) => [result.source.key, { matchedCount: 0, datedCount: 0, unknownDateCount: 0 }]));
 
   const jobs = [];
@@ -50,9 +58,32 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
         workArrangement: arrangement,
         distanceMiles: null,
         locationMatched: false,
+        locationUnknown: false,
         usLocationUnknown: false,
         arrangementUnknown: false,
       };
+      const derivedLocation = deriveLocationMetadata(enriched);
+
+      if ((!enriched.locationLabel || enriched.locationLabel === "Unspecified" || /^united states$/i.test(String(enriched.locationLabel || "").trim()))
+        && derivedLocation.locationLabel) {
+        enriched.locationLabel = derivedLocation.locationLabel;
+      }
+      if (!enriched.city && derivedLocation.city) {
+        enriched.city = derivedLocation.city;
+      }
+      if (!enriched.region && derivedLocation.region) {
+        enriched.region = derivedLocation.region;
+      }
+      if (!enriched.country && derivedLocation.country) {
+        enriched.country = derivedLocation.country;
+      }
+      if ((!enriched.rawLocationText || enriched.rawLocationText === "Unspecified") && derivedLocation.rawLocationText) {
+        enriched.rawLocationText = derivedLocation.rawLocationText;
+      }
+
+      if (!matchesIncludedCompanies(enriched, includedCompanies)) {
+        continue;
+      }
 
       if (excludedCompanies.has(enriched.company.toLowerCase())) {
         continue;
@@ -66,20 +97,24 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
         continue;
       }
 
-      const hasKnownDate = Boolean(enriched.postedAt || enriched.updatedAt);
-      if (!matchesRecency(enriched, filters.recency)) {
-        if (filters.recency && !hasKnownDate) {
-          unknownDateMatches.push(enriched);
-          const counts = matchedCounts.get(result.source.key);
-          counts.unknownDateCount += 1;
-        }
+      if (isExpiredJob(enriched)) {
+        continue;
+      }
+
+      applyResolvedRecency(enriched);
+      const hasKnownDate = Boolean(enriched.parsedRecencyDate);
+      const hasKnownLocation = hasSpecifiedLocation(enriched);
+      const recencyEvaluation = evaluateRecency(enriched, filters.recency);
+      if (!recencyEvaluation.matches) {
         continue;
       }
 
       if (filters.usOnly) {
         if (matchesUnitedStates(enriched)) {
+          enriched.locationUnknown = false;
           enriched.usLocationUnknown = false;
-        } else if (!hasSpecifiedLocation(enriched)) {
+        } else if (!hasKnownLocation) {
+          enriched.locationUnknown = true;
           enriched.usLocationUnknown = true;
         } else {
           continue;
@@ -96,22 +131,36 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
 
       if (useDistanceFilter) {
         const distanceMiles = calculateJobDistanceMiles(enriched, filters.userCoordinates);
-        if (!Number.isFinite(distanceMiles) || distanceMiles > maxDistanceMiles) {
+        if (!Number.isFinite(distanceMiles)) {
+          if (!hasKnownLocation) {
+            enriched.locationUnknown = true;
+          } else {
+            continue;
+          }
+        } else if (distanceMiles > maxDistanceMiles) {
           continue;
+        } else {
+          enriched.distanceMiles = distanceMiles;
+          enriched.locationMatched = true;
         }
-
-        enriched.distanceMiles = distanceMiles;
-        enriched.locationMatched = true;
-      } else if (needsLocationFilter(arrangement, filters) && !matchesLocationGroups(enriched, filters.locationGroups)) {
-        continue;
       } else {
-        enriched.locationMatched = matchesLocationGroups(enriched, filters.locationGroups);
+        const shouldApplyManualLocationFilter = needsLocationFilter(arrangement, filters);
+        const manualLocationMatched = matchesLocationGroups(enriched, filters.locationGroups);
+        if (shouldApplyManualLocationFilter && !manualLocationMatched) {
+          if (hasManualLocationFilter && !hasKnownLocation) {
+            enriched.locationUnknown = true;
+          } else {
+            continue;
+          }
+        } else {
+          enriched.locationMatched = manualLocationMatched;
+        }
       }
 
       jobs.push(enriched);
       const counts = matchedCounts.get(result.source.key);
       counts.matchedCount += 1;
-      if (enriched.postedAt || enriched.updatedAt) {
+      if (enriched.parsedRecencyDate) {
         counts.datedCount += 1;
       } else {
         counts.unknownDateCount += 1;
@@ -119,10 +168,18 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
     }
   }
 
-  await enrichMissingDescriptions(jobs);
-  await enrichMissingDescriptions(unknownDateMatches);
+  if (!skipDescriptionEnrichment) {
+    await enrichMissingDescriptions(jobs, filters);
+    await enrichMissingDescriptions(unknownDateMatches, filters);
+  }
+  reconcileUnknownDateMatches(jobs, unknownDateMatches, filters);
+  removeExpiredJobs(jobs);
+  removeExpiredJobs(unknownDateMatches);
+  refreshDerivedJobMetadata(jobs);
+  refreshDerivedJobMetadata(unknownDateMatches);
   backfillCompensation(jobs);
   backfillCompensation(unknownDateMatches);
+  filterUnknownDateMatches(unknownDateMatches, filters);
 
   const annotated = annotatePossibleDuplicates(jobs);
   const annotatedUnknownDate = annotatePossibleDuplicates(unknownDateMatches);
@@ -161,6 +218,357 @@ export async function searchJobs({ sources, filters, sourceResultsOverride }) {
   };
 }
 
+export function analyzeSourceFilterFunnel(jobs, filters = {}) {
+  const parsedJobs = Array.isArray(jobs) ? jobs.filter(Boolean) : [];
+  const normalizedJobs = parsedJobs.map((job) => prepareJobForFiltering(job));
+  const recencyEvaluations = normalizedJobs.map((job) => ({
+    job,
+    evaluation: evaluateRecency(job, filters.recency),
+    within24h: evaluateRecency(job, "24h"),
+    within7d: evaluateRecency(job, "7d"),
+  }));
+  const dateFilteredJobs = recencyEvaluations
+    .filter((entry) => entry.evaluation.matches)
+    .map((entry) => entry.job);
+  const keywordEvaluations = dateFilteredJobs.map((job) => ({
+    job,
+    current: evaluateKeywordMatch(job, filters.keyword, filters.keywordScope, filters.keywordMode),
+    strict: evaluateKeywordMatch(job, filters.keyword, filters.keywordScope, "strict"),
+    loose: evaluateKeywordMatch(job, filters.keyword, filters.keywordScope, "loose"),
+    legacyStrict: evaluateLegacyKeywordMatch(job, filters.keyword, filters.keywordScope, "strict"),
+    legacyLoose: evaluateLegacyKeywordMatch(job, filters.keyword, filters.keywordScope, "loose"),
+  }));
+  const keywordFilteredJobs = keywordEvaluations
+    .filter((entry) => entry.current.matches)
+    .map((entry) => entry.job);
+  const dedupedJobs = uniqueBy(
+    aggregateJobsByListingKey(annotatePossibleDuplicates(keywordFilteredJobs))
+      .filter(Boolean)
+      .sort(sortJobs),
+    buildSearchDedupKey
+  );
+  const finalJobs = dedupedJobs.filter((job) => passesFinalFilters(job, filters));
+
+  const stageCounts = {
+    parsed: parsedJobs.length,
+    normalized: normalizedJobs.length,
+    dateFiltered: dateFilteredJobs.length,
+    keywordFiltered: keywordFilteredJobs.length,
+    deduped: finalJobs.length < dedupedJobs.length ? dedupedJobs.length : dedupedJobs.length,
+    final: finalJobs.length,
+    within24h: recencyEvaluations.filter((entry) => entry.within24h.reason === "within_window" && entry.within24h.matches).length,
+    within7d: recencyEvaluations.filter((entry) => entry.within7d.reason === "within_window" && entry.within7d.matches).length,
+    unknownDate: recencyEvaluations.filter((entry) => entry.evaluation.reason === "unknown_date").length,
+    droppedAsOld: recencyEvaluations.filter((entry) => entry.evaluation.reason === "old").length,
+    droppedAsInvalidDate: recencyEvaluations.filter((entry) => entry.evaluation.reason === "invalid_date" && !entry.evaluation.matches).length,
+  };
+
+  const stageFlags = buildStageDropFlags({
+    fetched: null,
+    ...stageCounts,
+  });
+
+  return {
+    stageCounts,
+    stageFlags,
+    keywordAudit: buildKeywordAudit(keywordEvaluations, filters),
+  };
+}
+
+function prepareJobForFiltering(job) {
+  const arrangement = normalizeWorkArrangement(job?.workArrangement);
+  const enriched = {
+    ...job,
+    workArrangement: arrangement,
+    distanceMiles: null,
+    locationMatched: false,
+    locationUnknown: false,
+    usLocationUnknown: false,
+    arrangementUnknown: false,
+  };
+  const derivedLocation = deriveLocationMetadata(enriched);
+
+  if ((!enriched.locationLabel || enriched.locationLabel === "Unspecified" || /^united states$/i.test(String(enriched.locationLabel || "").trim()))
+    && derivedLocation.locationLabel) {
+    enriched.locationLabel = derivedLocation.locationLabel;
+  }
+  if (!enriched.city && derivedLocation.city) {
+    enriched.city = derivedLocation.city;
+  }
+  if (!enriched.region && derivedLocation.region) {
+    enriched.region = derivedLocation.region;
+  }
+  if (!enriched.country && derivedLocation.country) {
+    enriched.country = derivedLocation.country;
+  }
+  if ((!enriched.rawLocationText || enriched.rawLocationText === "Unspecified") && derivedLocation.rawLocationText) {
+    enriched.rawLocationText = derivedLocation.rawLocationText;
+  }
+
+  applyResolvedRecency(enriched);
+
+  return enriched;
+}
+
+function passesFinalFilters(job, filters = {}) {
+  const includedCompanies = new Set((filters.includedCompanies || []).map((name) => normalizeText(name)));
+  const excludedCompanies = new Set((filters.excludedCompanies || []).map((name) => String(name || "").toLowerCase()));
+  const selectedArrangements = new Set((filters.arrangements || []).map((value) => normalizeWorkArrangement(value)));
+  const maxDistanceMiles = Number(filters.distanceMiles);
+  const useDistanceFilter = Number.isFinite(maxDistanceMiles) && maxDistanceMiles > 0 && filters.userCoordinates;
+  const hasManualLocationFilter = hasActiveLocationGroups(filters.locationGroups);
+  const arrangement = normalizeWorkArrangement(job?.workArrangement);
+  const hasKnownLocation = hasSpecifiedLocation(job);
+
+  if (!matchesIncludedCompanies(job, includedCompanies)) {
+    return false;
+  }
+  if (excludedCompanies.has(String(job?.company || "").toLowerCase())) {
+    return false;
+  }
+  if (!isLikelyJobPosting(job)) {
+    return false;
+  }
+  if (isExpiredJob(job) || job?.invalidApplyPage || isUnrecoverableListing(job)) {
+    return false;
+  }
+
+  if (filters.usOnly && !matchesUnitedStates(job) && hasKnownLocation) {
+    return false;
+  }
+
+  if (selectedArrangements.size > 0 && arrangement !== "unknown" && !selectedArrangements.has(arrangement)) {
+    return false;
+  }
+
+  if (useDistanceFilter) {
+    const distanceMiles = calculateJobDistanceMiles(job, filters.userCoordinates);
+    if (Number.isFinite(distanceMiles)) {
+      return distanceMiles <= maxDistanceMiles;
+    }
+    return !hasKnownLocation;
+  }
+
+  const shouldApplyManualLocationFilter = needsLocationFilter(arrangement, filters);
+  const manualLocationMatched = matchesLocationGroups(job, filters.locationGroups);
+  if (shouldApplyManualLocationFilter && !manualLocationMatched && hasKnownLocation) {
+    return false;
+  }
+  if (shouldApplyManualLocationFilter && !manualLocationMatched && hasManualLocationFilter) {
+    return !hasKnownLocation;
+  }
+
+  return true;
+}
+
+function buildStageDropFlags(stageCounts = {}) {
+  const order = ["fetched", "parsed", "normalized", "dateFiltered", "keywordFiltered", "deduped", "final"];
+  const flags = [];
+
+  for (let index = 1; index < order.length; index += 1) {
+    const previousKey = order[index - 1];
+    const currentKey = order[index];
+    const previousValue = Number(stageCounts?.[previousKey]);
+    const currentValue = Number(stageCounts?.[currentKey]);
+    if (!Number.isFinite(previousValue) || previousValue <= 0 || !Number.isFinite(currentValue)) {
+      continue;
+    }
+
+    const dropCount = previousValue - currentValue;
+    const dropRatio = dropCount / previousValue;
+    if (dropRatio > 0.5) {
+      flags.push({
+        stage: currentKey,
+        previousStage: previousKey,
+        previousCount: previousValue,
+        currentCount: currentValue,
+        dropCount,
+        dropRatio,
+      });
+    }
+  }
+
+  return flags;
+}
+
+function buildKeywordAudit(keywordEvaluations = [], filters = {}) {
+  const evaluations = Array.isArray(keywordEvaluations) ? keywordEvaluations : [];
+  const currentMode = filters.keywordMode || "strict";
+  const currentPassed = evaluations.filter((entry) => entry.current?.matches);
+  const currentRejected = evaluations.filter((entry) => !entry.current?.matches);
+
+  return {
+    keyword: filters.keyword || "",
+    keywordScope: filters.keywordScope || "title_and_description",
+    keywordMode: currentMode,
+    enteringKeywordFilter: evaluations.length,
+    passedKeywordFilter: currentPassed.length,
+    rejectedKeywordFilter: currentRejected.length,
+    sampleAcceptedTitles: buildKeywordTitleSamples(currentPassed, "current", 10),
+    sampleRejectedTitles: buildKeywordTitleSamples(currentRejected, "current", 10),
+    rejectionReasons: buildKeywordReasonCounts(currentRejected, "current"),
+    modeComparison: {
+      legacyStrict: buildKeywordModeSummary(evaluations, "legacyStrict"),
+      legacyLoose: buildKeywordModeSummary(evaluations, "legacyLoose"),
+      strict: buildKeywordModeSummary(evaluations, "strict"),
+      loose: buildKeywordModeSummary(evaluations, "loose"),
+    },
+  };
+}
+
+function buildKeywordModeSummary(evaluations = [], modeKey) {
+  const matched = evaluations.filter((entry) => entry?.[modeKey]?.matches);
+  const rejected = evaluations.filter((entry) => !entry?.[modeKey]?.matches);
+  return {
+    passed: matched.length,
+    rejected: rejected.length,
+    sampleAcceptedTitles: buildKeywordTitleSamples(matched, modeKey, 6),
+    sampleRejectedTitles: buildKeywordTitleSamples(rejected, modeKey, 6),
+    rejectionReasons: buildKeywordReasonCounts(rejected, modeKey),
+  };
+}
+
+function buildKeywordReasonCounts(entries = [], modeKey) {
+  const counts = {};
+  for (const entry of entries) {
+    const reason = String(entry?.[modeKey]?.reason || "unknown");
+    counts[reason] = (counts[reason] || 0) + 1;
+  }
+  return Object.fromEntries(
+    Object.entries(counts).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+  );
+}
+
+function buildKeywordTitleSamples(entries = [], modeKey, limit = 10) {
+  const samples = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    const job = entry?.job || {};
+    const evaluation = entry?.[modeKey] || {};
+    const title = String(job?.title || "").trim();
+    if (!title) {
+      continue;
+    }
+    const dedupeKey = `${title.toLowerCase()}|${String(evaluation.reason || "")}|${String(evaluation.matchedCandidate || "")}`;
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+    samples.push({
+      title,
+      company: job?.company || null,
+      provider: job?.provider || null,
+      reason: evaluation.reason || null,
+      matchedCandidate: evaluation.matchedCandidate || null,
+      matchedField: evaluation.matchedField || null,
+    });
+    if (samples.length >= limit) {
+      break;
+    }
+  }
+  return samples;
+}
+
+function matchesIncludedCompanies(job, includedCompanies) {
+  if (!(includedCompanies instanceof Set) || includedCompanies.size === 0) {
+    return true;
+  }
+
+  const normalizedCompany = normalizeText(job?.company);
+  const normalizedSourceName = normalizeText(job?.sourceName);
+  const normalizedSourceKey = normalizeText(job?.sourceKey).replace(/[-\s]+/g, "");
+  const applyUrl = String(job?.applyUrl || "").trim().toLowerCase();
+  const candidates = new Set([
+    normalizedCompany,
+    normalizedSourceName,
+    normalizedCompany.replace(/[-\s]+/g, ""),
+    normalizedSourceName.replace(/[-\s]+/g, ""),
+    normalizedSourceKey,
+  ].filter(Boolean));
+
+  const applyUrlMatch = applyUrl.match(/https?:\/\/(?:boards|job-boards)\.greenhouse\.io\/([^/]+)\//i)
+    || applyUrl.match(/https?:\/\/jobs\.ashbyhq\.com\/([^/]+)/i)
+    || applyUrl.match(/https?:\/\/(?:www\.)?careers-page\.com\/([^/]+)\/job\//i);
+  if (applyUrlMatch?.[1]) {
+    const alias = normalizeText(applyUrlMatch[1]);
+    candidates.add(alias);
+    candidates.add(alias.replace(/[-\s]+/g, ""));
+  }
+
+  for (const included of includedCompanies) {
+    const normalizedIncluded = normalizeText(included);
+    const collapsedIncluded = normalizedIncluded.replace(/[-\s]+/g, "");
+    if (candidates.has(normalizedIncluded) || candidates.has(collapsedIncluded)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasActiveLocationGroups(locationGroups) {
+  return Array.isArray(locationGroups)
+    && locationGroups.some((group) => group?.stateCode || (Array.isArray(group?.areaNames) && group.areaNames.length > 0));
+}
+
+function filterUnknownDateMatches(jobs, filters) {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return;
+  }
+
+  const selectedArrangements = new Set((filters.arrangements || []).map((value) => normalizeWorkArrangement(value)));
+  const maxDistanceMiles = Number(filters.distanceMiles);
+  const useDistanceFilter = Number.isFinite(maxDistanceMiles) && maxDistanceMiles > 0 && filters.userCoordinates;
+  const hasManualLocationFilter = hasActiveLocationGroups(filters.locationGroups);
+
+  for (let index = jobs.length - 1; index >= 0; index -= 1) {
+    const job = jobs[index];
+    const arrangement = normalizeWorkArrangement(job?.workArrangement);
+    const hasKnownLocation = hasSpecifiedLocation(job);
+
+    if (filters.usOnly && !matchesUnitedStates(job) && hasKnownLocation) {
+      jobs.splice(index, 1);
+      continue;
+    }
+
+    if (selectedArrangements.size > 0 && arrangement !== "unknown" && !selectedArrangements.has(arrangement)) {
+      jobs.splice(index, 1);
+      continue;
+    }
+
+    if (useDistanceFilter) {
+      const distanceMiles = calculateJobDistanceMiles(job, filters.userCoordinates);
+      if (Number.isFinite(distanceMiles)) {
+        if (distanceMiles > maxDistanceMiles) {
+          jobs.splice(index, 1);
+          continue;
+        }
+        job.distanceMiles = distanceMiles;
+        job.locationMatched = true;
+      } else {
+        if (hasKnownLocation) {
+          jobs.splice(index, 1);
+          continue;
+        }
+        job.locationUnknown = !hasKnownLocation;
+      }
+      continue;
+    }
+
+    const shouldApplyManualLocationFilter = needsLocationFilter(arrangement, filters);
+    const manualLocationMatched = matchesLocationGroups(job, filters.locationGroups);
+    if (shouldApplyManualLocationFilter && !manualLocationMatched && hasKnownLocation) {
+      jobs.splice(index, 1);
+      continue;
+    }
+
+    job.locationMatched = manualLocationMatched;
+    if (shouldApplyManualLocationFilter && !manualLocationMatched) {
+      job.locationUnknown = !hasKnownLocation;
+    }
+  }
+}
+
 function backfillCompensation(jobs) {
   for (const job of Array.isArray(jobs) ? jobs : []) {
     if (job?.compensation && containsCurrencyMarker(job.compensation)) {
@@ -175,11 +583,70 @@ function backfillCompensation(jobs) {
   }
 }
 
-async function enrichMissingDescriptions(jobs) {
+function removeExpiredJobs(jobs) {
+  if (!Array.isArray(jobs)) {
+    return;
+  }
+
+  for (let index = jobs.length - 1; index >= 0; index -= 1) {
+    if (isExpiredJob(jobs[index]) || jobs[index]?.invalidApplyPage || isUnrecoverableListing(jobs[index])) {
+      jobs.splice(index, 1);
+    }
+  }
+}
+
+function reconcileUnknownDateMatches(jobs, unknownDateMatches, filters) {
+  if (!Array.isArray(jobs) || !Array.isArray(unknownDateMatches)) {
+    return;
+  }
+
+  for (let index = unknownDateMatches.length - 1; index >= 0; index -= 1) {
+    const job = unknownDateMatches[index];
+    const hasKnownDate = Boolean(job?.postedAt || job?.updatedAt);
+    if (!hasKnownDate) {
+      continue;
+    }
+
+    unknownDateMatches.splice(index, 1);
+    if (matchesRecency(job, filters?.recency)) {
+      jobs.push(job);
+    }
+  }
+}
+
+async function enrichMissingDescriptions(jobs, filters = {}) {
+  const hasSpecificCompanyFocus = Array.isArray(filters?.includedCompanies) && filters.includedCompanies.length > 0;
+  const maxJobsToEnrich = Array.isArray(jobs) && jobs.length > 250 && !hasSpecificCompanyFocus
+    ? MAX_BROAD_SEARCH_DESCRIPTION_ENRICH_JOBS
+    : MAX_DESCRIPTION_ENRICH_JOBS;
+  const includedCompanies = new Set(
+    (Array.isArray(filters?.includedCompanies) ? filters.includedCompanies : [])
+      .map((value) => normalizeText(value))
+      .filter(Boolean)
+  );
   const jobsNeedingDescription = jobs
     .filter((job) => needsDescriptionRefresh(job) && job.applyUrl)
-    .sort(sortJobs)
-    .slice(0, MAX_DESCRIPTION_ENRICH_JOBS);
+    .sort((left, right) => {
+      const leftScore = buildDescriptionRefreshPriority(left, includedCompanies);
+      const rightScore = buildDescriptionRefreshPriority(right, includedCompanies);
+      if (leftScore !== rightScore) {
+        return rightScore - leftScore;
+      }
+
+      const leftWorkday = isWorkdayHostedUrl(left?.applyUrl) ? 1 : 0;
+      const rightWorkday = isWorkdayHostedUrl(right?.applyUrl) ? 1 : 0;
+      if (leftWorkday !== rightWorkday) {
+        return rightWorkday - leftWorkday;
+      }
+
+      const leftUnknown = normalizeWorkArrangement(left?.workArrangement) === "unknown" ? 1 : 0;
+      const rightUnknown = normalizeWorkArrangement(right?.workArrangement) === "unknown" ? 1 : 0;
+      if (leftUnknown !== rightUnknown) {
+        return rightUnknown - leftUnknown;
+      }
+      return sortJobs(left, right);
+    })
+    .slice(0, maxJobsToEnrich);
   if (jobsNeedingDescription.length === 0) {
     return;
   }
@@ -197,6 +664,25 @@ async function enrichMissingDescriptions(jobs) {
           job.descriptionSnippet = fallback.descriptionSnippet || job.descriptionSnippet || null;
           job.searchText = fallback.searchText || fallback.descriptionSnippet || job.searchText || null;
         }
+        if (!job.postedAt && fallback.postedAt) {
+          job.postedAt = fallback.postedAt;
+        }
+        if (!job.applicationDeadlineAt && fallback.applicationDeadlineAt) {
+          job.applicationDeadlineAt = fallback.applicationDeadlineAt;
+        }
+        if ((!job.compensation || !containsCurrencyMarker(job.compensation)) && fallback.compensation) {
+          job.compensation = fallback.compensation;
+        }
+        if ((normalizeWorkArrangement(job.workArrangement) === "unknown" || !job.workArrangement) && fallback.workArrangement) {
+          job.workArrangement = fallback.workArrangement;
+        }
+        if (shouldReplaceExternalId(job.externalId, fallback.jobId)) {
+          job.externalId = fallback.jobId;
+        }
+        if (fallback.invalidApplyPage) {
+          job.invalidApplyPage = true;
+        }
+        job.company = deriveEmployerCompany(job, { company: job.company });
       }
   }
 
@@ -207,7 +693,80 @@ async function enrichMissingDescriptions(jobs) {
   await Promise.all(workers);
 }
 
+function refreshDerivedJobMetadata(jobs) {
+  for (const job of Array.isArray(jobs) ? jobs : []) {
+    job.company = deriveEmployerCompany(job, { company: job.company });
+    const derivedLocation = deriveLocationMetadata(job);
+    const currentArrangement = normalizeWorkArrangement(job.workArrangement);
+    const inferredArrangement = normalizeWorkArrangement(inferWorkArrangement([
+      job.workArrangement,
+      job.locationLabel,
+      job.rawLocationText,
+      job.searchText,
+      job.descriptionSnippet,
+      job.applyUrl,
+    ].filter(Boolean).join(" \n ")));
+
+    if ((!job.locationLabel || job.locationLabel === "Unspecified" || /^united states$/i.test(String(job.locationLabel || "").trim()))
+      && derivedLocation.locationLabel) {
+      job.locationLabel = derivedLocation.locationLabel;
+    }
+    if (!job.city && derivedLocation.city) {
+      job.city = derivedLocation.city;
+    }
+    if (!job.region && derivedLocation.region) {
+      job.region = derivedLocation.region;
+    }
+    if (!job.country && derivedLocation.country) {
+      job.country = derivedLocation.country;
+    }
+    if ((!job.rawLocationText || job.rawLocationText === "Unspecified") && derivedLocation.rawLocationText) {
+      job.rawLocationText = derivedLocation.rawLocationText;
+    }
+    applyResolvedRecency(job);
+    if (hasSpecifiedLocation(job)) {
+      job.locationUnknown = false;
+    }
+    if (job.usLocationUnknown && matchesUnitedStates(job)) {
+      job.usLocationUnknown = false;
+    }
+
+    if ((currentArrangement === "unknown" || !job.workArrangement) && inferredArrangement !== "unknown") {
+      job.workArrangement = inferredArrangement;
+      job.arrangementUnknown = false;
+    } else if (normalizeWorkArrangement(job.workArrangement) !== "unknown") {
+      job.arrangementUnknown = false;
+    }
+  }
+}
+
+function applyResolvedRecency(job) {
+  const recency = evaluateRecency(job, "");
+  job.postedDate = recency.postedDate;
+  job.updatedDate = recency.updatedDate;
+  job.firstSeenDate = recency.firstSeenDate;
+  job.parsedRecencyDate = recency.parsedRecencyDate;
+  job.dateStatus = recency.dateStatus;
+  return job;
+}
+
 function needsDescriptionRefresh(job) {
+  if (!job?.postedAt && !job?.updatedAt) {
+    return true;
+  }
+
+  if (!job?.compensation || !containsCurrencyMarker(job.compensation)) {
+    return true;
+  }
+
+  if (!job?.externalId || /^https?:/i.test(String(job.externalId || "").trim())) {
+    return true;
+  }
+
+  if (normalizeWorkArrangement(job?.workArrangement) === "unknown") {
+    return true;
+  }
+
   if (!hasUsableDescriptionText(job)) {
     return true;
   }
@@ -218,6 +777,93 @@ function needsDescriptionRefresh(job) {
   }
 
   return /^(the\s+)?(total\s+cash\s+range|cash\s+range|salary\s+range|pay\s+range|base\s+pay)/.test(candidate);
+}
+
+function isWorkdayHostedUrl(value) {
+  const url = String(value || "").toLowerCase();
+  return url.includes("myworkdayjobs.com") || url.includes(".wd");
+}
+
+function shouldReplaceExternalId(currentValue, nextValue) {
+  const current = String(currentValue || "").trim();
+  const next = String(nextValue || "").trim();
+  if (!next) {
+    return false;
+  }
+  if (!current || /^https?:/i.test(current)) {
+    return true;
+  }
+  if (current === next) {
+    return false;
+  }
+  if (/^\d{4,}$/.test(current) && /^[A-Za-z]+-\d+(?:-\d+)?$/i.test(next)) {
+    return true;
+  }
+  if (/^\d{4,}$/.test(current) && /^[A-Za-z]\d+(?:-\d+)?$/i.test(next)) {
+    return true;
+  }
+  if (current.length < next.length && next.includes(current)) {
+    return true;
+  }
+  return false;
+}
+
+function buildDescriptionRefreshPriority(job = {}, includedCompanies = new Set()) {
+  let score = 0;
+  if (!job?.postedAt && !job?.updatedAt) {
+    score += 5;
+  }
+  if (!job?.compensation || !containsCurrencyMarker(job.compensation)) {
+    score += 4;
+  }
+  if (normalizeWorkArrangement(job?.workArrangement) === "unknown") {
+    score += 4;
+  }
+  if (!hasSpecifiedLocation(job)) {
+    score += 3;
+  }
+  if (!job?.externalId || /^https?:/i.test(String(job.externalId || "").trim())) {
+    score += 3;
+  }
+  if (!hasUsableDescriptionText(job)) {
+    score += 2;
+  }
+
+  const url = String(job?.applyUrl || "").toLowerCase();
+  if (url.includes("job-boards.greenhouse.io") || url.includes("jobs.lever.co") || url.includes("icims.com")) {
+    score += 1;
+  }
+  const normalizedCompany = normalizeText(job?.company || deriveEmployerCompany(job, { company: job?.company }) || "");
+  if (normalizedCompany && includedCompanies.has(normalizedCompany)) {
+    score += 10;
+  }
+
+  return score;
+}
+
+function isUnrecoverableListing(job = {}) {
+  const candidate = String(job.searchText || job.descriptionSnippet || "").trim();
+  const hasDescription = hasUsableDescriptionText(job);
+  const hasDate = Boolean(job.postedAt || job.updatedAt);
+  const hasCompensation = Boolean(job.compensation && containsCurrencyMarker(job.compensation));
+  const hasDeadline = Boolean(job.applicationDeadlineAt);
+  const identifier = String(job.externalId || "").trim();
+
+  if (hasDescription || hasDate || hasCompensation || hasDeadline) {
+    return false;
+  }
+
+  if (!candidate) {
+    return true;
+  }
+
+  if (identifier && candidate === identifier) {
+    return true;
+  }
+
+  return /^[A-Za-z]+-\d+(?:-\d+)?$/.test(candidate)
+    || /^[A-Za-z]\d+(?:-\d+)?$/.test(candidate)
+    || /^\d{4,}$/.test(candidate);
 }
 
 function extractCompensationFromJob(job = {}) {
@@ -427,6 +1073,10 @@ function needsLocationFilter(arrangement, filters) {
     && filters.locationGroups.some((group) => group.stateCode || (group.areaNames && group.areaNames.length > 0));
   if (!hasLocation) {
     return false;
+  }
+
+  if (filters.locationMode === "my_location") {
+    return true;
   }
 
   return arrangement === "hybrid" || arrangement === "onsite" || arrangement === "unknown";

@@ -6,7 +6,7 @@ export async function fetchManatalJobs(source) {
     throw new Error("Manatal source requires careersUrl or domainSlug");
   }
 
-  const landingHtml = await fetchText(config.careersUrl);
+  const landingHtml = await fetchManatalText(config.careersUrl);
   const runtimeConfig = extractRuntimeConfig(landingHtml, config, config.careersUrl);
   const postings = [];
   const seenUrls = new Set();
@@ -20,12 +20,15 @@ export async function fetchManatalJobs(source) {
 
     let responseJson;
     try {
-      responseJson = await fetchJson(url, {
+      responseJson = await fetchManatalJson(url, {
         headers: {
           Referer: runtimeConfig.boardUrl,
         },
       });
     } catch (error) {
+      if (isTransientManatalError(error) && postings.length > 0) {
+        break;
+      }
       if (page > 1 && Number(error?.status || 0) === 404) {
         break;
       }
@@ -59,9 +62,11 @@ export async function fetchManatalJobs(source) {
         }
       }
 
+      const descriptionText = cleanInlineText(job.description || job.job_description || job.description_text);
       const locationLabel = locationParts[0] || locationParts.slice(1).join(", ") || "Unspecified";
       postings.push(buildNormalizedJob(source, {
-        id: applyUrl,
+        id: cleanInlineText(job.hash || job.id) || applyUrl,
+        externalId: cleanInlineText(job.hash || job.id) || null,
         company: source.company,
         title: cleanInlineText(job.position_name || job.title) || "Untitled Position",
         team: cleanInlineText(job.organization_name) || null,
@@ -69,6 +74,9 @@ export async function fetchManatalJobs(source) {
         locationLabel,
         postedAt,
         applyUrl,
+        descriptionSnippet: descriptionText ? descriptionText.slice(0, 1400) : null,
+        searchText: descriptionText || null,
+        compensation: extractCompensation(job),
         rawLocationText: locationLabel,
       }));
       seenUrls.add(applyUrl);
@@ -167,6 +175,62 @@ function safeUrl(value) {
 
 function cleanInlineText(value) {
   return cleanText(decodeHtmlEntities(String(value || "").replace(/<[^>]+>/g, " "))) || "";
+}
+
+function extractCompensation(job = {}) {
+  const candidates = [
+    job.salary,
+    job.salary_display,
+    job.salary_range,
+    job.compensation,
+    job.compensation_display,
+    job.pay_range,
+  ];
+
+  for (const value of candidates) {
+    const text = cleanInlineText(value);
+    if (text && /(?:\$|USD|CAD|EUR|GBP|AUD|NZD|JPY|\bper\s+(?:hour|year|annum)\b)/i.test(text)) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
+async function fetchManatalText(url, options = {}) {
+  return fetchWithManatalBackoff(() => fetchText(url, options));
+}
+
+async function fetchManatalJson(url, options = {}) {
+  return fetchWithManatalBackoff(() => fetchJson(url, options));
+}
+
+async function fetchWithManatalBackoff(callback) {
+  const delays = [900, 1800, 3600, 7200];
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      return await callback();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientManatalError(error) || attempt >= delays.length) {
+        throw error;
+      }
+      await sleep(delays[attempt]);
+    }
+  }
+
+  throw lastError;
+}
+
+function isTransientManatalError(error) {
+  const status = Number(error?.status || 0);
+  return status === 429 || status === 408 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function sanitizeUrl(value) {
