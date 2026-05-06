@@ -1394,24 +1394,84 @@ export function matchesUnitedStates(job) {
 
   const normalizedCountry = normalizeText(job.country);
   const normalizedRegion = normalizeText(job.region);
+  const rawLocation = normalizeText([job.locationLabel, job.rawLocationText].filter(Boolean).join(" "));
+
+  if (hasExplicitNonUsLocation(job)) {
+    return false;
+  }
 
   if (["us", "usa", "united states", "united states of america"].includes(normalizedCountry)) {
     return true;
   }
 
-  if (normalizedRegion && stateNameFromCode(normalizedRegion.toUpperCase()) !== normalizedRegion) {
+  if (normalizedRegion && isUsStateCode(normalizedRegion)) {
     return true;
   }
 
-  return haystack.includes(" united states ")
-    || haystack.startsWith("united states ")
-    || haystack.endsWith(" united states")
-    || haystack.includes(" usa ")
-    || haystack.startsWith("usa ")
-    || haystack.endsWith(" usa")
-    || haystack.includes(" us ")
-    || haystack.startsWith("us ")
-    || haystack.endsWith(" us");
+  return rawLocation.includes(" united states ")
+    || rawLocation.startsWith("united states ")
+    || rawLocation.endsWith(" united states")
+    || rawLocation.includes(" usa ")
+    || rawLocation.startsWith("usa ")
+    || rawLocation.endsWith(" usa")
+    || rawLocation.includes(" us ")
+    || rawLocation.startsWith("us ")
+    || rawLocation.endsWith(" us");
+}
+
+export function hasExplicitNonUsLocation(job) {
+  const normalizedCountry = normalizeText(job?.country);
+  if (normalizedCountry && !["us", "usa", "united states", "united states of america"].includes(normalizedCountry)) {
+    return true;
+  }
+
+  const locationText = normalizeText([
+    job?.locationLabel,
+    job?.rawLocationText,
+  ].filter(Boolean).join(" "));
+  const titleText = normalizeText(job?.title);
+  const applyUrlText = normalizeText(decodeURIComponentSafe(job?.applyUrl));
+
+  if (!locationText && !titleText && !applyUrlText) {
+    return false;
+  }
+
+  if (/\b(australia|poland|india|ireland|united kingdom|uk|canada|philippines|germany|france|spain|italy|china|japan|singapore|mexico|brazil|egypt|turkey|netherlands|switzerland|sweden|norway|denmark|finland|belgium|austria|greece|portugal|thailand|indonesia|malaysia|vietnam|new zealand|croatia)\b/i.test(locationText)) {
+    return true;
+  }
+
+  if (/\b(bengaluru|bangalore|hyderabad|jakarta|zagreb|navi mumbai|chennai|giza|london|edinburgh|paris|dublin|montreal)\b/i.test([locationText, applyUrlText].filter(Boolean).join(" "))) {
+    return true;
+  }
+
+  if (/\b(?:remote|hybrid|onsite|on site|based)\s*(?:-|,|in|from)?\s*(australia|poland|india|ireland|united kingdom|uk|canada|philippines|germany|france|spain|italy|china|japan|singapore|mexico|brazil|egypt|turkey|netherlands|switzerland|sweden|norway|denmark|finland|belgium|austria|greece|portugal|thailand|indonesia|malaysia|vietnam|new zealand|croatia)\b/i.test(titleText)) {
+    return true;
+  }
+
+  const raw = String([
+    job?.locationLabel,
+    job?.rawLocationText,
+  ].filter(Boolean).join(" ")).trim();
+
+  if (/(?:^|,\s*)(?:[A-Za-z .'-]+,\s*)+[A-Z]{2,3}\s*,\s*(?:IN|IND|AU|AUS|PL|POL|GB|GBR|UK|CA|CAN|IE|IRL|DE|DEU|FR|FRA|ES|ESP|IT|ITA|CN|CHN|JP|JPN|SG|SGP)\s*$/i.test(raw)) {
+    return true;
+  }
+
+  return false;
+}
+
+function decodeURIComponentSafe(value) {
+  const raw = String(value || "");
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function isUsStateCode(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return Boolean(normalized && US_STATE_CODE_SET.has(normalized));
 }
 
 export function hasSpecifiedLocation(job) {
@@ -1480,22 +1540,65 @@ function haversineMiles(lat1, lon1, lat2, lon2) {
 
 function stateNameFromCode(code) {
   const lookup = {
+    AL: "alabama",
+    AK: "alaska",
+    AZ: "arizona",
+    AR: "arkansas",
     CA: "california",
     CO: "colorado",
+    CT: "connecticut",
+    DE: "delaware",
     FL: "florida",
     GA: "georgia",
+    HI: "hawaii",
+    ID: "idaho",
     IL: "illinois",
+    IN: "indiana",
+    IA: "iowa",
+    KS: "kansas",
+    KY: "kentucky",
+    LA: "louisiana",
+    ME: "maine",
+    MD: "maryland",
     MA: "massachusetts",
+    MI: "michigan",
+    MN: "minnesota",
+    MS: "mississippi",
+    MO: "missouri",
+    MT: "montana",
+    NE: "nebraska",
+    NV: "nevada",
+    NH: "new hampshire",
     NC: "north carolina",
+    ND: "north dakota",
     NJ: "new jersey",
+    NM: "new mexico",
     NY: "new york",
+    OH: "ohio",
+    OK: "oklahoma",
     OR: "oregon",
     PA: "pennsylvania",
+    RI: "rhode island",
+    SC: "south carolina",
+    SD: "south dakota",
+    TN: "tennessee",
     TX: "texas",
+    UT: "utah",
+    VT: "vermont",
     VA: "virginia",
     WA: "washington",
+    WV: "west virginia",
+    WI: "wisconsin",
+    WY: "wyoming",
     DC: "district of columbia",
   };
 
   return lookup[code] || normalizeText(code);
 }
+
+const US_STATE_CODE_SET = new Set([
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL",
+  "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT",
+  "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI",
+  "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+]);

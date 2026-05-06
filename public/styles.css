@@ -1033,6 +1033,12 @@ body.searching-active .status-pill {
   color: var(--accent-dark);
 }
 
+.unknown-results-copy {
+  color: var(--muted);
+  font-size: 0.94rem;
+  margin: 8px 0 14px;
+}
+
 .unknown-results-list {
   margin-top: 14px;
   display: grid;
