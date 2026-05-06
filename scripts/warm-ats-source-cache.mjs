@@ -161,6 +161,7 @@ function parseArgs(argv) {
     strategy: "uncached",
     sourceKeyFile: "",
     sourceKeys: [],
+    timeoutMs: 0,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -200,6 +201,11 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg.startsWith("--source-key-file=")) {
       options.sourceKeyFile = String(arg.split("=").slice(1).join("=") || "").trim();
+    } else if (arg === "--timeout-ms") {
+      options.timeoutMs = toPositiveInt(argv[index + 1]);
+      index += 1;
+    } else if (arg.startsWith("--timeout-ms=")) {
+      options.timeoutMs = toPositiveInt(arg.split("=").slice(1).join("="));
     }
   }
 
@@ -253,7 +259,7 @@ async function runLiveWarm(selectedSources, beforeSnapshot, options) {
 
   const groups = groupSourcesByProvider(selectedSources);
   for (const [provider, sources] of groups) {
-    const settings = getProviderSettings(provider);
+    const settings = getProviderSettings(provider, options);
     await runWithConcurrency(sources, settings.concurrency, async (source) => {
       const result = await warmSingleSource(source, settings, options);
       state.completedSources += 1;
@@ -674,10 +680,14 @@ function groupSourcesByProvider(sources) {
   return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
 }
 
-function getProviderSettings(provider) {
-  return PROVIDER_SETTINGS[normalizeProvider(provider)] || {
+function getProviderSettings(provider, options = {}) {
+  const settings = PROVIDER_SETTINGS[normalizeProvider(provider)] || {
     concurrency: DEFAULT_LIVE_CONCURRENCY,
     timeoutMs: DEFAULT_LIVE_TIMEOUT_MS,
+  };
+  return {
+    ...settings,
+    timeoutMs: options.timeoutMs > 0 ? options.timeoutMs : settings.timeoutMs,
   };
 }
 
