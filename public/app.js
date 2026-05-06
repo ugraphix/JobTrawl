@@ -432,7 +432,7 @@ function buildSourceSelectionPayload() {
 function buildSearchPayload(locationMode = getLocationMode(), locationGroups = collectEffectiveLocationGroups(locationMode)) {
   return {
     keyword: form.keyword.value.trim(),
-    keywordMode: form.keywordMode?.value || "strict",
+    keywordMode: form.keywordMode?.value || "loose",
     recency: form.recency.value,
     arrangements: getCheckedValues(arrangementsNode),
     usOnly: Boolean(usOnlyNode?.checked),
@@ -978,11 +978,12 @@ function renderJobCard(job) {
   const warningCards = [];
 
   if (job?.repostInfo?.isPossibleRepost) {
+    const repostDetails = buildRepostDetails(job.repostInfo);
     warningCards.push(`
       <div class="job-warning-card">
         <div class="job-repost-banner">${escapeHtml(job.repostInfo.label || "POSSIBLE REPOST")}</div>
-        ${Array.isArray(job.repostInfo.details) && job.repostInfo.details.length > 0
-          ? `<div class="job-repost-details">${job.repostInfo.details.map((detail) => `<div>${escapeHtml(detail)}</div>`).join("")}</div>`
+        ${repostDetails.length > 0
+          ? renderWarningDetailList(repostDetails, "job-repost-details")
           : ""}
       </div>
     `);
@@ -993,7 +994,7 @@ function renderJobCard(job) {
       <div class="job-warning-card">
         <div class="job-repost-banner job-duplicate-banner">${escapeHtml(job.duplicateInfo.label || "POSSIBLE DUPLICATE")}</div>
         ${Array.isArray(job.duplicateInfo.details) && job.duplicateInfo.details.length > 0
-          ? `<div class="job-repost-details job-duplicate-details">${job.duplicateInfo.details.map((detail) => `<div>${escapeHtml(detail)}</div>`).join("")}</div>`
+          ? renderWarningDetailList(job.duplicateInfo.details, "job-repost-details job-duplicate-details")
           : ""}
       </div>
     `);
@@ -1900,6 +1901,37 @@ function filterCheckboxGroup(node, query) {
 
 function getCheckedValues(node) {
   return [...node.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+}
+
+function renderWarningDetailList(details, className) {
+  return `
+    <ul class="${className}">
+      ${details.map((detail) => `<li>${escapeHtml(detail)}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function buildRepostDetails(repostInfo = {}) {
+  const details = Array.isArray(repostInfo.details) ? [...repostInfo.details] : [];
+  const firstSeenText = formatRepostHistoryDate(repostInfo.firstSeenAt);
+  const lastSeenText = formatRepostHistoryDate(repostInfo.lastSeenAt);
+
+  if (firstSeenText) {
+    details.push(`Originally seen: ${firstSeenText}`);
+  }
+  if (lastSeenText) {
+    details.push(`Last seen: ${lastSeenText}`);
+  }
+
+  return details;
+}
+
+function formatRepostHistoryDate(value) {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return "";
+  }
+  return new Date(timestamp).toLocaleString();
 }
 
 function formatDateLine(job) {

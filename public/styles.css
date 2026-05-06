@@ -949,11 +949,13 @@ body.searching-active .status-pill {
 
 .job-repost-details {
   display: grid;
-  gap: 2px;
-  text-align: center;
+  gap: 4px;
+  margin: 0;
+  padding-left: 1.2rem;
+  text-align: left;
   color: #8f3414;
   font-size: 0.92rem;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.35;
 }
 
