@@ -15,6 +15,14 @@ const WORKDAY_LIST_LIMIT = 20;
 const WORKDAY_LIST_PAGE_DELAY_MS = 150;
 const WORKDAY_LIST_RETRY_DELAY_MS = 800;
 const WORKDAY_LIST_MAX_RETRIES = 1;
+const WORKDAY_DETAIL_LOCATION_TIMEOUT_MS = 60000;
+const WORKDAY_VAGUE_LOCATION_PATTERN = /^(?:\d+\s+locations?|multiple\s+locations?)$/i;
+const US_STATE_CODES = new Set([
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "HI", "IA", "ID", "IL",
+  "IN", "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE",
+  "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT",
+  "VA", "VT", "WA", "WI", "WV", "WY",
+]);
 
 export async function fetchWorkdayJobs(source, filters = {}) {
   const resolvedSource = resolveWorkdaySourceConfig(source);
@@ -134,8 +142,8 @@ export async function fetchWorkdayJobs(source, filters = {}) {
 
   if (shouldFetchDetails) {
     const detailJobs = isZillowSource
-      ? prioritizeWorkdayDetailJobs(jobs, ZILLOW_DETAIL_MAX_JOBS)
-      : prioritizeWorkdayDetailJobs(jobs, WORKDAY_DETAIL_MAX_JOBS);
+      ? prioritizeWorkdayDetailJobs(jobs, ZILLOW_DETAIL_MAX_JOBS, keyword)
+      : prioritizeWorkdayDetailJobs(jobs, WORKDAY_DETAIL_MAX_JOBS, keyword);
     await enrichWorkdayDescriptions(detailJobs);
   }
 
@@ -177,18 +185,25 @@ function buildRequestBody(filters, limit, offset) {
 function normalizeWorkdayJob(source, job, index) {
   const applyUrl = absoluteWorkdayJobUrl(source, job.externalPath);
   const postingDate = extractPostingDate(job);
+  const location = extractWorkdayLocationMetadata(job, applyUrl);
 
-  return buildNormalizedJob(source, {
+  const normalized = buildNormalizedJob(source, {
     id: job.bulletFields?.[0] || job.externalPath || `${source.key}-${index}`,
     company: source.company,
     title: job.title,
-    locationLabel: job.locationsText || "Unspecified",
+    locationLabel: location.locationLabel || job.locationsText || "Unspecified",
+    city: location.city || null,
+    region: location.region || null,
+    country: location.country || null,
     postedAt: postingDate,
     applyUrl,
     descriptionSnippet: null,
     searchText: null,
-    rawLocationText: job.locationsText || null,
+    rawLocationText: location.rawLocationText || job.locationsText || null,
   });
+
+  normalized.workdayOriginalLocationLabel = job.locationsText || null;
+  return normalized;
 }
 
 function resolveWorkdaySourceConfig(source = {}) {
@@ -260,6 +275,11 @@ async function enrichWorkdayDescriptions(jobs) {
       return job;
     }
 
+    if (workdayNeedsDetailLocation(job)) {
+      const detailLocation = await fetchWorkdayDetailLocationMetadata(job.applyUrl);
+      applyWorkdayLocationMetadata(job, detailLocation);
+    }
+
     const fallback = await fetchWorkdayDescriptionFallback(job.applyUrl);
     if (fallback.descriptionSnippet || fallback.searchText) {
       job.descriptionSnippet = fallback.descriptionSnippet || safeText(cleanText(fallback.searchText), 2200) || null;
@@ -285,7 +305,8 @@ async function enrichWorkdayDescriptions(jobs) {
   });
 }
 
-function prioritizeWorkdayDetailJobs(jobs, limit) {
+function prioritizeWorkdayDetailJobs(jobs, limit, keyword = "") {
+  const keywordTerms = String(keyword || "").toLowerCase().split(/\s+/).filter(Boolean);
   return [...jobs]
     .sort((left, right) => {
       const leftMissingMetadata = workdayNeedsDetailMetadata(left) ? 1 : 0;
@@ -293,9 +314,22 @@ function prioritizeWorkdayDetailJobs(jobs, limit) {
       if (leftMissingMetadata !== rightMissingMetadata) {
         return rightMissingMetadata - leftMissingMetadata;
       }
+      const leftKeywordMatch = workdayTitleMatchesKeyword(left, keywordTerms) ? 1 : 0;
+      const rightKeywordMatch = workdayTitleMatchesKeyword(right, keywordTerms) ? 1 : 0;
+      if (leftKeywordMatch !== rightKeywordMatch) {
+        return rightKeywordMatch - leftKeywordMatch;
+      }
       return String(left?.title || "").localeCompare(String(right?.title || ""));
     })
     .slice(0, limit);
+}
+
+function workdayTitleMatchesKeyword(job, keywordTerms) {
+  if (!keywordTerms.length) {
+    return false;
+  }
+  const title = String(job?.title || "").toLowerCase();
+  return keywordTerms.every((term) => title.includes(term));
 }
 
 function workdayNeedsDetailMetadata(job) {
@@ -309,6 +343,344 @@ function workdayNeedsDetailMetadata(job) {
     || String(job.locationLabel || "").trim().toLowerCase() === "unspecified"
     || /^\d+\s+locations?$/i.test(String(job.locationLabel || "").trim())
   );
+}
+
+function workdayNeedsDetailLocation(job) {
+  if (!job) {
+    return false;
+  }
+
+  return (
+    !job.country
+    || !job.city
+    || isVagueWorkdayLocationLabel(job.locationLabel)
+    || isVagueWorkdayLocationLabel(job.rawLocationText)
+    || isVagueWorkdayLocationLabel(job.workdayOriginalLocationLabel)
+  );
+}
+
+async function fetchWorkdayDetailLocationMetadata(applyUrl) {
+  const detailUrl = buildWorkdayDetailApiUrl(applyUrl);
+  if (!detailUrl) {
+    return null;
+  }
+
+  try {
+    const detail = await fetchJson(detailUrl, {
+      headers: {
+        "Accept": "application/json",
+      },
+      signal: AbortSignal.timeout(WORKDAY_DETAIL_LOCATION_TIMEOUT_MS),
+    });
+    return extractWorkdayLocationMetadata(detail?.jobPostingInfo || detail, applyUrl);
+  } catch {
+    // Detail pages are an enrichment path; preserve the list result if they fail.
+    return null;
+  }
+}
+
+function buildWorkdayDetailApiUrl(jobUrl) {
+  try {
+    const parsed = new URL(String(jobUrl || ""));
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    const jobIndex = segments.findIndex((segment) => segment.toLowerCase() === "job");
+    if (jobIndex <= 0 || jobIndex >= segments.length - 1) {
+      return null;
+    }
+
+    const site = segments[jobIndex - 1];
+    const tenant = parsed.hostname.split(".")[0];
+    const detailSegments = segments.slice(jobIndex);
+    return `${parsed.origin}/wday/cxs/${tenant}/${site}/${detailSegments.join("/")}`;
+  } catch {
+    return null;
+  }
+}
+
+function applyWorkdayLocationMetadata(job, metadata) {
+  if (!job || !metadata) {
+    return;
+  }
+
+  if (metadata.locationLabel && (!job.locationLabel || isVagueWorkdayLocationLabel(job.locationLabel))) {
+    job.locationLabel = metadata.locationLabel;
+  }
+  if (metadata.city && !job.city) {
+    job.city = metadata.city;
+  }
+  if (metadata.region && !job.region) {
+    job.region = metadata.region;
+  }
+  if (metadata.country && !job.country) {
+    job.country = metadata.country;
+  }
+  if (metadata.rawLocationText && (!job.rawLocationText || isVagueWorkdayLocationLabel(job.rawLocationText))) {
+    job.rawLocationText = metadata.rawLocationText;
+  }
+}
+
+function extractWorkdayLocationMetadata(job = {}, applyUrl = null) {
+  const listLocation = extractLocationFromWorkdayPayload(job);
+  const urlLocation = extractUsLocationFromWorkdayUrl(applyUrl);
+  const allLocations = [
+    ...(listLocation.locations || []),
+    ...(urlLocation ? [urlLocation] : []),
+  ];
+  const usLocation = allLocations.find((location) => location.country === "US");
+  const primaryLocation = listLocation.primary || urlLocation || null;
+  const primaryIsVague = isVagueWorkdayLocationLabel(job.locationsText || job.location);
+
+  if (usLocation) {
+    const label = primaryIsVague || allLocations.length > 1
+      ? `Multiple locations, including ${usLocation.label}`
+      : usLocation.label;
+    return {
+      locationLabel: label,
+      city: usLocation.city,
+      region: usLocation.region,
+      country: "US",
+      rawLocationText: buildRawWorkdayLocationText(allLocations, job.locationsText || job.location),
+    };
+  }
+
+  if (primaryLocation) {
+    return {
+      locationLabel: primaryLocation.label,
+      city: primaryLocation.city || null,
+      region: primaryLocation.region || null,
+      country: primaryLocation.country || null,
+      rawLocationText: buildRawWorkdayLocationText(allLocations, job.locationsText || job.location),
+    };
+  }
+
+  return {
+    locationLabel: null,
+    city: null,
+    region: null,
+    country: null,
+    rawLocationText: null,
+  };
+}
+
+function extractLocationFromWorkdayPayload(job = {}) {
+  const rawLocations = [];
+  addWorkdayLocationCandidate(rawLocations, job.location, job.country);
+  addWorkdayLocationCandidate(rawLocations, job.locationsText, job.country);
+  addWorkdayLocationCandidate(rawLocations, job.jobRequisitionLocation, job.country);
+  addWorkdayLocationCandidate(rawLocations, job.primaryLocation, job.country);
+
+  if (Array.isArray(job.additionalLocations)) {
+    for (const location of job.additionalLocations) {
+      addWorkdayLocationCandidate(rawLocations, location, job.country);
+    }
+  }
+  if (Array.isArray(job.locations)) {
+    for (const location of job.locations) {
+      addWorkdayLocationCandidate(rawLocations, location, job.country);
+    }
+  }
+
+  const locations = dedupeWorkdayLocations(rawLocations.filter(Boolean));
+  return {
+    primary: locations[0] || null,
+    locations,
+  };
+}
+
+function addWorkdayLocationCandidate(output, value, countryHint = null) {
+  const parsedCountry = normalizeWorkdayCountry(countryHint);
+
+  if (!value) {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      addWorkdayLocationCandidate(output, item, countryHint);
+    }
+    return;
+  }
+
+  if (typeof value === "object") {
+    const objectCountry = normalizeWorkdayCountry(value.country) || parsedCountry;
+    addWorkdayLocationCandidate(output, value.descriptor || value.displayName || value.location || value.name, objectCountry);
+    return;
+  }
+
+  const location = parseWorkdayLocationText(String(value), parsedCountry);
+  if (location) {
+    output.push(location);
+  }
+}
+
+function parseWorkdayLocationText(value, countryHint = null) {
+  const text = cleanText(value || "");
+  if (!text || isVagueWorkdayLocationLabel(text)) {
+    return null;
+  }
+
+  const explicitCountry = normalizeWorkdayCountry(countryHint);
+  const textCountry = inferWorkdayCountryFromText(text);
+  const country = textCountry || explicitCountry;
+  const parts = text.split(",").map((part) => part.trim()).filter(Boolean);
+  let city = null;
+  let region = null;
+
+  if (country === "US" && parts.length >= 2) {
+    city = cleanWorkdayCity(parts[0]);
+    region = normalizeUsState(parts[1]);
+  } else if (country === "US") {
+    const match = text.match(/\b([A-Za-z .'-]{2,80}),\s*([A-Z]{2})\b/);
+    city = cleanWorkdayCity(match?.[1] || "");
+    region = normalizeUsState(match?.[2] || "");
+  } else if (parts.length >= 2 && /^[A-Z]{2,3}$/.test(parts.at(-1))) {
+    city = cleanWorkdayCity(parts[0]);
+    region = parts[1] || null;
+  } else {
+    city = cleanWorkdayCity(parts[0] || text);
+  }
+
+  if (country === "US" && (!city || (!region && !explicitCountry))) {
+    return null;
+  }
+
+  const label = country === "US" && city && region ? `${city}, ${region}` : text;
+  return {
+    label,
+    city: city || null,
+    region: region || null,
+    country,
+  };
+}
+
+function extractUsLocationFromWorkdayUrl(applyUrl) {
+  try {
+    const parsed = new URL(String(applyUrl || ""));
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    const jobIndex = segments.findIndex((segment) => segment.toLowerCase() === "job");
+    if (jobIndex < 0 || jobIndex >= segments.length - 1) {
+      return null;
+    }
+
+    const slug = decodeURIComponent(segments[jobIndex + 1] || "");
+    const match = slug.match(/^(.+)-([A-Z]{2})$/);
+    const region = normalizeUsState(match?.[2] || "");
+    if (!match?.[1] || !region) {
+      return null;
+    }
+
+    const city = titleCaseWorkdaySlug(match[1]);
+    if (!city) {
+      return null;
+    }
+
+    return {
+      label: `${city}, ${region}`,
+      city,
+      region,
+      country: "US",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildRawWorkdayLocationText(locations, fallback) {
+  const labels = dedupeWorkdayLocations(locations || []).map((location) => location.label).filter(Boolean);
+  if (labels.length) {
+    return labels.join("; ");
+  }
+  return cleanText(fallback || "") || null;
+}
+
+function dedupeWorkdayLocations(locations) {
+  const seen = new Set();
+  const output = [];
+  for (const location of locations) {
+    const key = `${location.label || ""}|${location.country || ""}`.toLowerCase();
+    if (!location.label || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(location);
+  }
+  return output;
+}
+
+function normalizeWorkdayCountry(value) {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === "object") {
+    return normalizeWorkdayCountry(value.alpha2Code || value.descriptor || value.name || value.displayName);
+  }
+
+  const text = cleanText(String(value));
+  if (/^(?:us|usa|united states|united states of america)$/i.test(text)) {
+    return "US";
+  }
+  if (/^(?:ca|can|canada)$/i.test(text)) {
+    return "CA";
+  }
+  if (/^(?:gb|uk|united kingdom|england|scotland|wales)$/i.test(text)) {
+    return "GB";
+  }
+  if (/^(?:ie|irl|ireland)$/i.test(text)) {
+    return "IE";
+  }
+  return /^[A-Z]{2}$/.test(text) ? text.toUpperCase() : null;
+}
+
+function inferWorkdayCountryFromText(value) {
+  const text = cleanText(value || "");
+  if (/\b(?:USA|United States|United States of America)\b/i.test(text)) {
+    return "US";
+  }
+  if (/\b[A-Za-z .'-]+,\s*[A-Z]{2}\b/.test(text)) {
+    const state = text.match(/\b[A-Za-z .'-]+,\s*([A-Z]{2})\b/)?.[1];
+    if (normalizeUsState(state)) {
+      return "US";
+    }
+  }
+  if (/\b(?:CAN|Canada)\b/i.test(text)) {
+    return "CA";
+  }
+  if (/\b(?:IRL|Ireland)\b/i.test(text)) {
+    return "IE";
+  }
+  return null;
+}
+
+function normalizeUsState(value) {
+  const state = String(value || "").trim().toUpperCase();
+  return US_STATE_CODES.has(state) ? state : null;
+}
+
+function cleanWorkdayCity(value) {
+  const text = cleanText(String(value || "").replace(/\s+/g, " "));
+  return text ? normalizeWorkdayCityCase(text.replace(/\s+-\s+.*$/, "")) : null;
+}
+
+function titleCaseWorkdaySlug(value) {
+  const normalized = String(value || "")
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.length <= 2 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(" ")
+    .trim();
+  return normalizeWorkdayCityCase(normalized);
+}
+
+function normalizeWorkdayCityCase(value) {
+  const aliases = new Map([
+    ["Mclean", "McLean"],
+  ]);
+  return aliases.get(value) || value;
+}
+
+function isVagueWorkdayLocationLabel(value) {
+  const text = cleanText(value || "");
+  return !text || /^(?:unspecified|unknown|n\/a)$/i.test(text) || WORKDAY_VAGUE_LOCATION_PATTERN.test(text);
 }
 
 function absoluteWorkdayJobUrl(source, externalPath) {
