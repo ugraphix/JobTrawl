@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { loadSourceConfig } from "../src/lib/config.js";
@@ -67,6 +67,7 @@ async function main() {
     reportPath: report.reportPath,
     progressPath: liveSummary ? path.relative(process.cwd(), PROGRESS_PATH) : null,
     totals: report.totals,
+    sourceKeyFileSummary: report.sourceKeyFileSummary,
     selectedSourcesByProvider: report.selectedSourcesByProvider,
     cacheCoverageByProvider: report.cacheCoverageByProvider,
     liveSummary: liveSummary ? summarizeLiveForConsole(liveSummary) : null,
@@ -77,6 +78,15 @@ async function main() {
 
 function buildReport({ allSources, selectedSources, cacheSnapshot, options, beforeSnapshot = cacheSnapshot, liveSummary = null }) {
   const selectedKeys = new Set(selectedSources.map((source) => source.key));
+  const runtimeKeys = new Set(allSources.map((source) => source.key));
+  const sourceKeyFileSummary = options.sourceKeys.length > 0
+    ? {
+        path: options.sourceKeyFile,
+        requested: options.sourceKeys.length,
+        matched: selectedSources.length,
+        missing: options.sourceKeys.filter((key) => !runtimeKeys.has(key)),
+      }
+    : null;
   const selectedCacheRows = cacheSnapshot.sources.filter((row) => selectedKeys.has(row.sourceKey));
   const selectedCachedKeys = new Set(selectedCacheRows.filter((row) => row.cachedJobs > 0).map((row) => row.sourceKey));
   const recentCutoff = Date.now() - RECENT_CACHE_WINDOW_MS;
@@ -112,6 +122,7 @@ function buildReport({ allSources, selectedSources, cacheSnapshot, options, befo
     reportPath: path.relative(process.cwd(), REPORT_PATH),
     progressPath: liveSummary ? path.relative(process.cwd(), PROGRESS_PATH) : null,
     options,
+    sourceKeyFileSummary,
     cacheDbPath: getCacheDbPath(),
     totals: {
       runtimeSources: allSources.length,
@@ -148,6 +159,8 @@ function parseArgs(argv) {
     force: false,
     all: false,
     strategy: "uncached",
+    sourceKeyFile: "",
+    sourceKeys: [],
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -182,23 +195,40 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg.startsWith("--strategy=")) {
       options.strategy = normalizeStrategy(arg.split("=").slice(1).join("="));
+    } else if (arg === "--source-key-file") {
+      options.sourceKeyFile = String(argv[index + 1] || "").trim();
+      index += 1;
+    } else if (arg.startsWith("--source-key-file=")) {
+      options.sourceKeyFile = String(arg.split("=").slice(1).join("=") || "").trim();
     }
   }
 
   options.providers = [...new Set(options.providers)];
+  if (options.sourceKeyFile) {
+    options.sourceKeys = readSourceKeyFile(options.sourceKeyFile);
+  }
   return options;
 }
 
 function validateLiveWarmOptions(options) {
-  if (!options.all && options.providers.length === 0) {
-    throw new Error("Live warming requires --provider <provider> or --all. Use --report-only for a dry run.");
+  if (!options.all && options.providers.length === 0 && options.sourceKeys.length === 0) {
+    throw new Error("Live warming requires --provider <provider>, --source-key-file <path>, or --all. Use --report-only for a dry run.");
   }
-  if (!options.all && options.limit <= 0) {
+  if (!options.all && options.providers.length > 0 && options.sourceKeys.length === 0 && options.limit <= 0) {
     throw new Error("Provider-limited live warming requires --limit <n> in this phase.");
   }
   if (options.all && options.limit <= 0) {
     throw new Error("Full 32k-source live warming is not enabled in this phase. Add --limit for a bounded live run.");
   }
+}
+
+function readSourceKeyFile(filePath) {
+  const resolvedPath = path.resolve(process.cwd(), filePath);
+  const keys = readFileSync(resolvedPath, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  return [...new Set(keys)];
 }
 
 async function runLiveWarm(selectedSources, beforeSnapshot, options) {
@@ -325,6 +355,15 @@ function dedupeSources(sources) {
 }
 
 function selectSources(sources, cacheSnapshot, options) {
+  if (options.sourceKeys.length > 0) {
+    const requestedKeys = new Set(options.sourceKeys);
+    const matchedSources = sources.filter((source) => requestedKeys.has(source.key));
+    if (matchedSources.length === 0) {
+      throw new Error(`No runtime sources matched ${options.sourceKeys.length} source keys from ${options.sourceKeyFile}.`);
+    }
+    return matchedSources.sort((left, right) => options.sourceKeys.indexOf(left.key) - options.sourceKeys.indexOf(right.key));
+  }
+
   const providerSet = new Set(options.providers);
   const filtered = providerSet.size > 0
     ? sources.filter((source) => providerSet.has(normalizeProvider(source.provider)))
