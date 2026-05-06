@@ -7,6 +7,7 @@ import {
   buildJobListingKey,
   extractCanonicalJobId,
   hasSpecifiedLocation,
+  hasExplicitNonUsLocation,
   inferWorkArrangement,
   isExpiredJob,
   isLikelyJobPosting,
@@ -49,6 +50,8 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
 
   const jobs = [];
   const unknownDateMatches = [];
+  const unknownLocationMatches = [];
+  const nonUsDroppedJobs = [];
 
   for (const result of sourceResults) {
     for (const job of result.jobs) {
@@ -113,10 +116,13 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
         if (matchesUnitedStates(enriched)) {
           enriched.locationUnknown = false;
           enriched.usLocationUnknown = false;
-        } else if (!hasKnownLocation) {
+        } else if (!hasExplicitNonUsLocation(enriched)) {
           enriched.locationUnknown = true;
           enriched.usLocationUnknown = true;
+          unknownLocationMatches.push(enriched);
+          continue;
         } else {
+          nonUsDroppedJobs.push(enriched);
           continue;
         }
       }
@@ -171,20 +177,27 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
   if (!skipDescriptionEnrichment) {
     await enrichMissingDescriptions(jobs, filters);
     await enrichMissingDescriptions(unknownDateMatches, filters);
+    await enrichMissingDescriptions(unknownLocationMatches, filters);
   }
   reconcileUnknownDateMatches(jobs, unknownDateMatches, filters);
   removeExpiredJobs(jobs);
   removeExpiredJobs(unknownDateMatches);
+  removeExpiredJobs(unknownLocationMatches);
   refreshDerivedJobMetadata(jobs);
   refreshDerivedJobMetadata(unknownDateMatches);
+  refreshDerivedJobMetadata(unknownLocationMatches);
   backfillCompensation(jobs);
   backfillCompensation(unknownDateMatches);
+  backfillCompensation(unknownLocationMatches);
   filterUnknownDateMatches(unknownDateMatches, filters);
+  filterUnknownLocationMatches(unknownLocationMatches, filters);
 
   const annotated = annotatePossibleDuplicates(jobs);
   const annotatedUnknownDate = annotatePossibleDuplicates(unknownDateMatches);
+  const annotatedUnknownLocation = annotatePossibleDuplicates(unknownLocationMatches);
   const aggregated = aggregateJobsByListingKey(annotated);
   const aggregatedUnknownDate = aggregateJobsByListingKey(annotatedUnknownDate);
+  const aggregatedUnknownLocation = aggregateJobsByListingKey(annotatedUnknownLocation);
   const deduped = uniqueBy(
     aggregated.sort(sortJobs),
     buildSearchDedupKey
@@ -193,10 +206,25 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
     aggregatedUnknownDate.sort(sortJobs),
     buildSearchDedupKey
   ).filter((job) => !deduped.some((datedJob) => buildSearchDedupKey(datedJob) === buildSearchDedupKey(job)));
+  const knownResultKeys = new Set([
+    ...deduped.map(buildSearchDedupKey),
+    ...dedupedUnknownDate.map(buildSearchDedupKey),
+  ]);
+  const dedupedUnknownLocation = uniqueBy(
+    aggregatedUnknownLocation.sort(sortJobs),
+    buildSearchDedupKey
+  ).filter((job) => !knownResultKeys.has(buildSearchDedupKey(job)));
 
   return {
     jobs: deduped,
     unknownDateJobs: dedupedUnknownDate,
+    unknownLocationJobs: dedupedUnknownLocation,
+    confirmedUsJobs: filters.usOnly ? deduped : [],
+    nonUsDroppedJobs: nonUsDroppedJobs.slice(0, 50),
+    confirmedUsCount: filters.usOnly ? deduped.length : 0,
+    unknownLocationCount: dedupedUnknownLocation.length,
+    nonUsDroppedCount: nonUsDroppedJobs.length,
+    headlineCount: filters.usOnly ? deduped.length : deduped.length,
     sources: sourceResults.map((result) => ({
       key: result.source.key,
       company: result.source.company,
@@ -214,6 +242,10 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
       activeLocations: filters.locationGroups || [],
       selectedArrangements: [...selectedArrangements],
       distanceFilterApplied: Boolean(useDistanceFilter),
+      headlineCount: filters.usOnly ? deduped.length : deduped.length,
+      confirmedUsCount: filters.usOnly ? deduped.length : 0,
+      unknownLocationCount: dedupedUnknownLocation.length,
+      nonUsDroppedCount: nonUsDroppedJobs.length,
     },
   };
 }
@@ -566,6 +598,31 @@ function filterUnknownDateMatches(jobs, filters) {
     if (shouldApplyManualLocationFilter && !manualLocationMatched) {
       job.locationUnknown = !hasKnownLocation;
     }
+  }
+}
+
+function filterUnknownLocationMatches(jobs, filters) {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return;
+  }
+
+  const selectedArrangements = new Set((filters.arrangements || []).map((value) => normalizeWorkArrangement(value)));
+
+  for (let index = jobs.length - 1; index >= 0; index -= 1) {
+    const job = jobs[index];
+    const arrangement = normalizeWorkArrangement(job?.workArrangement);
+    if (hasExplicitNonUsLocation(job) || matchesUnitedStates(job)) {
+      jobs.splice(index, 1);
+      continue;
+    }
+
+    if (selectedArrangements.size > 0 && arrangement !== "unknown" && !selectedArrangements.has(arrangement)) {
+      jobs.splice(index, 1);
+      continue;
+    }
+
+    job.locationUnknown = true;
+    job.usLocationUnknown = true;
   }
 }
 

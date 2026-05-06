@@ -622,6 +622,7 @@ function renderResults(payload, filters, locationMode) {
   const datedAndUnknownDateJobs = [
     ...(Array.isArray(payload.jobs) ? payload.jobs : []),
     ...(Array.isArray(payload.unknownDateJobs) ? payload.unknownDateJobs : []),
+    ...(Array.isArray(payload.unknownLocationJobs) ? payload.unknownLocationJobs : []),
   ];
   datedAndUnknownDateJobs.forEach((job) => {
     const trackerKey = buildTrackerKey(job);
@@ -639,6 +640,9 @@ function renderResults(payload, filters, locationMode) {
   const visibleUnknownDateJobs = showHiddenPosts
     ? (Array.isArray(payload.unknownDateJobs) ? payload.unknownDateJobs : [])
     : (Array.isArray(payload.unknownDateJobs) ? payload.unknownDateJobs.filter((job) => !job.hiddenByUser) : []);
+  const visibleUnknownLocationJobs = showHiddenPosts
+    ? (Array.isArray(payload.unknownLocationJobs) ? payload.unknownLocationJobs : [])
+    : (Array.isArray(payload.unknownLocationJobs) ? payload.unknownLocationJobs.filter((job) => !job.hiddenByUser) : []);
   renderResultsVisibilityControls(hiddenJobsCount);
 
   const usLocationUnknownJobs = visibleJobs.filter((job) => job.usLocationUnknown);
@@ -650,11 +654,18 @@ function renderResults(payload, filters, locationMode) {
     ...primaryJobs.filter((job) => !job.postedAt && !job.updatedAt),
     ...visibleUnknownDateJobs,
   ];
-  const totalJobs = visibleJobs.length + visibleUnknownDateJobs.length;
+  const totalJobs = visibleJobs.length + visibleUnknownDateJobs.length + visibleUnknownLocationJobs.length;
+  const headlineJobs = filters.usOnly ? jobsWithKnownUsLocation.length : visibleJobs.length;
 
-  resultsCountNode.textContent = hiddenJobsCount > 0
-    ? `${totalJobs} matched job${totalJobs === 1 ? "" : "s"} found • ${hiddenJobsCount} hidden`
-    : `${totalJobs} matched job${totalJobs === 1 ? "" : "s"} found`;
+  if (filters.usOnly) {
+    resultsCountNode.textContent = hiddenJobsCount > 0
+      ? `${headlineJobs} verified U.S. job${headlineJobs === 1 ? "" : "s"} • ${hiddenJobsCount} hidden`
+      : `${headlineJobs} verified U.S. job${headlineJobs === 1 ? "" : "s"}`;
+  } else {
+    resultsCountNode.textContent = hiddenJobsCount > 0
+      ? `${totalJobs} matched job${totalJobs === 1 ? "" : "s"} found • ${hiddenJobsCount} hidden`
+      : `${totalJobs} matched job${totalJobs === 1 ? "" : "s"} found`;
+  }
   summaryNode.textContent = buildSummary(payload, filters, locationMode);
   renderSourceHealth(payload.sources);
 
@@ -664,7 +675,7 @@ function renderResults(payload, filters, locationMode) {
     return;
   }
 
-  if (visibleJobs.length === 0 && visibleUnknownDateJobs.length === 0) {
+  if (visibleJobs.length === 0 && visibleUnknownDateJobs.length === 0 && visibleUnknownLocationJobs.length === 0) {
     resultsNode.className = "results-list empty-state";
     resultsNode.textContent = "All matched jobs are currently hidden. Turn on Show hidden posts to review them again.";
     return;
@@ -704,6 +715,18 @@ function renderResults(payload, filters, locationMode) {
     `
     : "";
 
+  const unknownLocationMarkup = visibleUnknownLocationJobs.length > 0
+    ? `
+      <details class="unknown-results-panel">
+        <summary>Jobs with unknown location (${visibleUnknownLocationJobs.length})</summary>
+        <p class="unknown-results-copy">These jobs do not include enough location data to confirm whether they are U.S.-based.</p>
+        <div class="unknown-results-list">
+          ${visibleUnknownLocationJobs.map(renderJobCard).join("")}
+        </div>
+      </details>
+    `
+    : "";
+
   const unknownArrangementMarkup = unknownArrangementJobs.length > 0
     ? `
       <details class="unknown-results-panel" ${datedJobs.length === 0 && unknownDateJobs.length === 0 ? "open" : ""}>
@@ -715,7 +738,7 @@ function renderResults(payload, filters, locationMode) {
     `
     : "";
 
-  resultsNode.innerHTML = `${datedMarkup}${unknownMarkup}${unknownArrangementMarkup}${unknownUsLocationMarkup}`;
+  resultsNode.innerHTML = `${datedMarkup}${unknownMarkup}${unknownArrangementMarkup}${unknownUsLocationMarkup}${unknownLocationMarkup}`;
 }
 
 function persistSearchState(payload, filters, locationMode) {
