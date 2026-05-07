@@ -703,12 +703,12 @@ function parseLocationFragment(fragment) {
     return { locationLabel: "United States", city: null, region: null, country: "US" };
   }
 
-  if (/^(Philippines|India|Canada|Ireland|United Kingdom|UK|Thailand|Germany|Switzerland|Austria|Spain|China|Luxembourg|Italy|Greece)$/i.test(value)) {
+  if (/^(Philippines|India|Canada|Ireland|Israel|United Kingdom|UK|Thailand|Germany|Switzerland|Austria|Spain|China|Luxembourg|Italy|Greece)$/i.test(value)) {
     const country = capitalizeLocationWord(value);
     return { locationLabel: country, city: null, region: null, country };
   }
 
-  if (/^Remote,\s*(United States|US|USA|Philippines|India|Canada|Ireland|United Kingdom|UK|Thailand|Germany|Switzerland|Austria|Spain|China|Luxembourg|Italy|Greece)$/i.test(value)) {
+  if (/^Remote,\s*(United States|US|USA|Philippines|India|Canada|Ireland|Israel|United Kingdom|UK|Thailand|Germany|Switzerland|Austria|Spain|China|Luxembourg|Italy|Greece)$/i.test(value)) {
     const countryMatch = value.match(/^Remote,\s*(.+)$/i)?.[1] || "";
     const normalizedCountry = normalizeCountryValue(countryMatch);
     return {
@@ -727,6 +727,11 @@ function parseLocationFragment(fragment) {
       region: null,
       country: "US",
     };
+  }
+
+  const knownNonUsCity = normalizeKnownNonUsCityFragment(value);
+  if (knownNonUsCity) {
+    return knownNonUsCity;
   }
 
   const parts = value.split(",").map((part) => cleanText(part)).filter(Boolean);
@@ -840,6 +845,9 @@ function normalizeCountryValue(value) {
   if (/^Ireland$/i.test(normalized)) {
     return "Ireland";
   }
+  if (/^Israel$/i.test(normalized)) {
+    return "Israel";
+  }
   if (/^Thailand$/i.test(normalized)) {
     return "Thailand";
   }
@@ -951,6 +959,24 @@ function normalizeUsRegion(value) {
   }
 
   return US_STATE_NAMES.get(normalized.toLowerCase()) || null;
+}
+
+function normalizeKnownNonUsCityFragment(value) {
+  const normalized = cleanText(value || "");
+  if (!normalized) {
+    return null;
+  }
+
+  if (/\b(?:gurgaon|gurugram)\b/i.test(normalized)) {
+    return {
+      locationLabel: "Gurgaon, India",
+      city: "Gurgaon",
+      region: null,
+      country: "India",
+    };
+  }
+
+  return null;
 }
 
 function capitalizeLocationWord(value) {

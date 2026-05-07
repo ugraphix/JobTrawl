@@ -1436,15 +1436,15 @@ export function hasExplicitNonUsLocation(job) {
     return false;
   }
 
-  if (/\b(australia|poland|india|ireland|united kingdom|uk|canada|philippines|germany|france|spain|italy|china|japan|singapore|mexico|brazil|egypt|turkey|netherlands|switzerland|sweden|norway|denmark|finland|belgium|austria|greece|portugal|thailand|indonesia|malaysia|vietnam|new zealand|croatia)\b/i.test(locationText)) {
+  if (/\b(australia|poland|india|ireland|israel|united kingdom|uk|canada|philippines|germany|france|spain|italy|china|japan|singapore|mexico|brazil|egypt|turkey|netherlands|switzerland|sweden|norway|denmark|finland|belgium|austria|greece|portugal|thailand|indonesia|malaysia|vietnam|new zealand|croatia)\b/i.test(locationText)) {
     return true;
   }
 
-  if (/\b(bengaluru|bangalore|hyderabad|jakarta|zagreb|navi mumbai|chennai|giza|london|edinburgh|paris|dublin|montreal)\b/i.test([locationText, applyUrlText].filter(Boolean).join(" "))) {
+  if (/\b(bengaluru|bangalore|hyderabad|gurgaon|gurugram|jakarta|zagreb|navi mumbai|chennai|giza|london|edinburgh|paris|dublin|montreal)\b/i.test([locationText, applyUrlText].filter(Boolean).join(" "))) {
     return true;
   }
 
-  if (/\b(?:remote|hybrid|onsite|on site|based)\s*(?:-|,|in|from)?\s*(australia|poland|india|ireland|united kingdom|uk|canada|philippines|germany|france|spain|italy|china|japan|singapore|mexico|brazil|egypt|turkey|netherlands|switzerland|sweden|norway|denmark|finland|belgium|austria|greece|portugal|thailand|indonesia|malaysia|vietnam|new zealand|croatia)\b/i.test(titleText)) {
+  if (/\b(?:remote|hybrid|onsite|on site|based)\s*(?:-|,|in|from)?\s*(australia|poland|india|ireland|israel|united kingdom|uk|canada|philippines|germany|france|spain|italy|china|japan|singapore|mexico|brazil|egypt|turkey|netherlands|switzerland|sweden|norway|denmark|finland|belgium|austria|greece|portugal|thailand|indonesia|malaysia|vietnam|new zealand|croatia)\b/i.test(titleText)) {
     return true;
   }
 
