@@ -27,6 +27,10 @@ const GENERATED_INVENTORY_WARM_BATCH_SIZE = Math.max(1, Number(process.env.GENER
 const REPOST_POSTED_GAP_MS = 24 * 60 * 60 * 1000;
 const BULK_CACHE_ALL_SOURCES_THRESHOLD = 1000;
 const BULK_UNKNOWN_DATE_LIMIT = 250;
+const BULK_KEYWORD_UNKNOWN_DATE_LIMIT = Math.max(
+  BULK_UNKNOWN_DATE_LIMIT,
+  Number(process.env.BULK_KEYWORD_UNKNOWN_DATE_LIMIT || 4000)
+);
 const BULK_DATED_RESULT_LIMIT = Math.max(500, Number(process.env.BULK_DATED_RESULT_LIMIT || 4000));
 
 let database = null;
@@ -907,6 +911,17 @@ function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
         const sourceChunks = buildSourceKeyChunks(normalizedKeys);
 
         if (recencyPrefilter) {
+          const keywordSqlConfig = buildKeywordSqlConfig({
+            keywordPrefilter,
+            broadSearch: true,
+          });
+          const keywordClause = keywordPrefilter
+            ? ` AND (${buildGeneratedInventoryKeywordSqlClause(keywordSqlConfig)})`
+            : "";
+          const keywordParams = buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig);
+          const unknownDateLimit = keywordPrefilter
+            ? BULK_KEYWORD_UNKNOWN_DATE_LIMIT
+            : BULK_UNKNOWN_DATE_LIMIT;
           const datedRows = [];
           const unknownRows = [];
           for (const chunk of sourceChunks) {
@@ -930,6 +945,7 @@ function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
               WHERE postings.source_key IN (${placeholders})
                 AND expires_at > ?
                 AND COALESCE(postings.posted_at, postings.updated_at) >= ?
+                ${keywordClause}
               ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
               LIMIT ${BULK_DATED_RESULT_LIMIT}
             `);
@@ -953,20 +969,27 @@ function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
                 AND expires_at > ?
                 AND postings.posted_at IS NULL
                 AND postings.updated_at IS NULL
+                ${keywordClause}
               ORDER BY postings.cached_at DESC
-              LIMIT ${BULK_UNKNOWN_DATE_LIMIT}
+              LIMIT ${unknownDateLimit}
             `);
             datedRows.push(...datedStatement.all(
               ...chunk,
               Date.now(),
-              ...buildCachedRecencySqlParams(recencyPrefilter)
+              ...buildCachedRecencySqlParams(recencyPrefilter),
+              ...keywordParams
             ));
-            unknownRows.push(...unknownStatement.all(...chunk, Date.now()));
+            unknownRows.push(...unknownStatement.all(...chunk, Date.now(), ...keywordParams));
           }
-          return [...datedRows, ...unknownRows]
+          const datedJobs = datedRows
             .map(mapCachedRowToJob)
             .sort(sortCachedJobsForDisplay)
-            .slice(0, BULK_DATED_RESULT_LIMIT + BULK_UNKNOWN_DATE_LIMIT)
+            .slice(0, BULK_DATED_RESULT_LIMIT);
+          const unknownJobs = unknownRows
+            .map(mapCachedRowToJob)
+            .sort(sortCachedJobsForDisplay)
+            .slice(0, unknownDateLimit);
+          return [...datedJobs, ...unknownJobs]
             .filter((job) => matchesGeneratedInventoryKeywordPrefilter(job, keywordPrefilter));
         }
 
