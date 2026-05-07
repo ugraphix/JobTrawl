@@ -46,11 +46,14 @@ export async function fetchManatalJobs(source) {
         continue;
       }
 
+      const city = cleanInlineText(job.city);
+      const region = cleanInlineText(job.state);
+      const country = normalizeManatalCountry(job.country);
       const locationParts = [
         cleanInlineText(job.location_display),
-        cleanInlineText(job.city),
-        cleanInlineText(job.state),
-        cleanInlineText(job.country),
+        city,
+        region,
+        country || cleanInlineText(job.country),
       ].filter(Boolean);
 
       let postedAt = null;
@@ -64,7 +67,7 @@ export async function fetchManatalJobs(source) {
 
       const descriptionText = cleanInlineText(job.description || job.job_description || job.description_text);
       const locationLabel = locationParts[0] || locationParts.slice(1).join(", ") || "Unspecified";
-      postings.push(buildNormalizedJob(source, {
+      const normalizedJob = buildNormalizedJob(source, {
         id: cleanInlineText(job.hash || job.id) || applyUrl,
         externalId: cleanInlineText(job.hash || job.id) || null,
         company: source.company,
@@ -72,13 +75,24 @@ export async function fetchManatalJobs(source) {
         team: cleanInlineText(job.organization_name) || null,
         department: cleanInlineText(job.organization_name) || null,
         locationLabel,
+        city: city || null,
+        region: region || null,
+        country,
         postedAt,
         applyUrl,
         descriptionSnippet: descriptionText ? descriptionText.slice(0, 1400) : null,
         searchText: descriptionText || null,
         compensation: extractCompensation(job),
         rawLocationText: locationLabel,
-      }));
+      });
+
+      // Manatal exposes structured location fields for countries that the shared
+      // canonicalizer may not know yet. Preserve them so U.S.-only filtering can
+      // safely drop explicit non-U.S. jobs instead of treating them as unknown.
+      normalizedJob.city = city || normalizedJob.city || null;
+      normalizedJob.region = region || normalizedJob.region || null;
+      normalizedJob.country = country || normalizedJob.country || null;
+      postings.push(normalizedJob);
       seenUrls.add(applyUrl);
     }
 
@@ -195,6 +209,32 @@ function extractCompensation(job = {}) {
   }
 
   return null;
+}
+
+function normalizeManatalCountry(value) {
+  const text = cleanInlineText(value);
+  if (!text) {
+    return null;
+  }
+
+  const normalized = text.toLowerCase();
+  const countryAliases = new Map([
+    ["united states", "US"],
+    ["united states of america", "US"],
+    ["usa", "US"],
+    ["u.s.", "US"],
+    ["us", "US"],
+    ["canada", "Canada"],
+    ["united kingdom", "United Kingdom"],
+    ["uk", "United Kingdom"],
+    ["south africa", "South Africa"],
+    ["united arab emirates", "United Arab Emirates"],
+    ["uae", "United Arab Emirates"],
+    ["hong kong", "Hong Kong"],
+    ["hong kong sar", "Hong Kong"],
+  ]);
+
+  return countryAliases.get(normalized) || text;
 }
 
 async function fetchManatalText(url, options = {}) {
