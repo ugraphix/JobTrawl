@@ -727,9 +727,18 @@ function prioritizeICimsDetailJobs(jobs, keyword) {
       if (leftNeedsMetadata !== rightNeedsMetadata) {
         return rightNeedsMetadata - leftNeedsMetadata;
       }
+      const leftKeywordPriority = hasICimsDetailKeywordPriority(left) ? 1 : 0;
+      const rightKeywordPriority = hasICimsDetailKeywordPriority(right) ? 1 : 0;
+      if (leftKeywordPriority !== rightKeywordPriority) {
+        return rightKeywordPriority - leftKeywordPriority;
+      }
       return String(left?.title || "").localeCompare(String(right?.title || ""));
     })
     .slice(0, ICIMS_DETAIL_MAX_JOBS);
+}
+
+function hasICimsDetailKeywordPriority(job) {
+  return /\b(product manager|product owner|product\s*(?:&|and)\s*operations|product operations|product lead)\b/i.test(String(job?.title || ""));
 }
 
 function needsICimsDetailEnrichment(job) {
@@ -749,40 +758,27 @@ function needsICimsDetailEnrichment(job) {
 function extractICimsDetailMetadata(html) {
   const source = String(html || "");
   if (!source) {
-    return {
-      postedAt: null,
-      locationLabel: null,
-      rawLocationText: null,
-      city: null,
-      region: null,
-      country: null,
-    };
+    return buildEmptyICimsDetailMetadata();
   }
 
   const jsonLdMatches = [...source.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   for (const match of jsonLdMatches) {
     try {
       const parsed = JSON.parse(decodeHtmlEntities(match[1] || "").trim());
-      const normalized = Array.isArray(parsed) ? parsed : [parsed];
-      for (const entry of normalized) {
-        if (!entry || String(entry["@type"] || "").toLowerCase() !== "jobposting") {
+      const structuredJobs = collectICimsDetailJsonLdJobs(parsed);
+      for (const entry of structuredJobs) {
+        const locations = collectICimsJsonLdLocations(entry);
+        const locationMetadata = buildICimsDetailLocationMetadata(locations);
+        if (!locationMetadata.locationLabel && !locationMetadata.rawLocationText) {
           continue;
         }
-        const address = Array.isArray(entry.jobLocation)
-          ? entry.jobLocation[0]?.address
-          : entry.jobLocation?.address;
-        const parts = [
-          address?.addressLocality,
-          address?.addressRegion,
-          address?.addressCountry,
-        ].filter(Boolean);
         return {
           postedAt: extractPostedDateFromHtml(source) || String(entry.datePosted || "").trim() || null,
-          locationLabel: parts.length > 0 ? parts.join(", ") : null,
-          rawLocationText: parts.length > 0 ? parts.join(", ") : null,
-          city: String(address?.addressLocality || "").trim() || null,
-          region: String(address?.addressRegion || "").trim() || null,
-          country: String(address?.addressCountry || "").trim() || null,
+          locationLabel: locationMetadata.locationLabel,
+          rawLocationText: locationMetadata.rawLocationText,
+          city: locationMetadata.city,
+          region: locationMetadata.region,
+          country: locationMetadata.country,
         };
       }
     } catch {
@@ -798,6 +794,164 @@ function extractICimsDetailMetadata(html) {
     region: null,
     country: null,
   };
+}
+
+function buildEmptyICimsDetailMetadata() {
+  return {
+    postedAt: null,
+    locationLabel: null,
+    rawLocationText: null,
+    city: null,
+    region: null,
+    country: null,
+  };
+}
+
+function collectICimsDetailJsonLdJobs(value, jobs = [], seen = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectICimsDetailJsonLdJobs(item, jobs, seen);
+    }
+    return jobs;
+  }
+
+  if (!value || typeof value !== "object" || seen.has(value)) {
+    return jobs;
+  }
+  seen.add(value);
+
+  const types = Array.isArray(value["@type"]) ? value["@type"] : [value["@type"]];
+  if (types.some((type) => String(type || "").toLowerCase() === "jobposting")) {
+    jobs.push(value);
+  }
+
+  for (const nested of Object.values(value)) {
+    if (nested && typeof nested === "object") {
+      collectICimsDetailJsonLdJobs(nested, jobs, seen);
+    }
+  }
+
+  return jobs;
+}
+
+function collectICimsJsonLdLocations(entry) {
+  const rawLocations = Array.isArray(entry?.jobLocation)
+    ? entry.jobLocation
+    : entry?.jobLocation
+      ? [entry.jobLocation]
+      : [];
+
+  return rawLocations
+    .map(normalizeICimsJsonLdLocation)
+    .filter(Boolean);
+}
+
+function normalizeICimsJsonLdLocation(location) {
+  if (!location || typeof location !== "object") {
+    return null;
+  }
+
+  const address = location.address && typeof location.address === "object"
+    ? location.address
+    : location;
+  const city = normalizeICimsAddressValue(address.addressLocality);
+  const region = normalizeICimsAddressValue(address.addressRegion);
+  const country = normalizeICimsCountryValue(address.addressCountry);
+  const name = normalizeICimsAddressValue(location.name);
+  const streetAddress = normalizeICimsAddressValue(address.streetAddress);
+
+  if (![city, region, country, name, streetAddress].some(Boolean)) {
+    return null;
+  }
+
+  return {
+    name,
+    city,
+    region,
+    country,
+    streetAddress,
+  };
+}
+
+function buildICimsDetailLocationMetadata(locations) {
+  const normalizedLocations = (Array.isArray(locations) ? locations : [])
+    .map((location) => ({
+      city: location.city || null,
+      region: location.region || null,
+      country: location.country || null,
+      label: [location.city, location.region, location.country].filter(Boolean).join(", ")
+        || [location.name, location.country].filter(Boolean).join(", ")
+        || location.country
+        || location.name
+        || null,
+    }))
+    .filter((location) => location.label || location.country);
+
+  if (normalizedLocations.length === 0) {
+    return {
+      locationLabel: null,
+      rawLocationText: null,
+      city: null,
+      region: null,
+      country: null,
+    };
+  }
+
+  const rawLocationText = [...new Set(normalizedLocations.map((location) => location.label).filter(Boolean))]
+    .join(" | ");
+  const usLocation = normalizedLocations.find((location) => location.country === "US");
+  if (usLocation) {
+    return {
+      locationLabel: usLocation.label || "United States",
+      rawLocationText,
+      city: usLocation.city,
+      region: usLocation.region,
+      country: "US",
+    };
+  }
+
+  const countries = new Set(normalizedLocations.map((location) => location.country).filter(Boolean));
+  const first = normalizedLocations[0] || {};
+  return {
+    locationLabel: first.label || rawLocationText || null,
+    rawLocationText,
+    city: first.city || null,
+    region: first.region || null,
+    country: countries.size > 0 ? [...countries][0] : null,
+  };
+}
+
+function normalizeICimsAddressValue(value) {
+  const normalized = safeText(value, 160);
+  if (!normalized || /^(unavailable|null|undefined|n\/a|na)$/i.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function normalizeICimsCountryValue(value) {
+  const normalized = normalizeICimsAddressValue(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const aliases = new Map([
+    ["US", "US"],
+    ["USA", "US"],
+    ["UNITED STATES", "US"],
+    ["UNITED STATES OF AMERICA", "US"],
+    ["BR", "Brazil"],
+    ["BRA", "Brazil"],
+    ["BRAZIL", "Brazil"],
+    ["CO", "Colombia"],
+    ["COL", "Colombia"],
+    ["COLOMBIA", "Colombia"],
+    ["MX", "Mexico"],
+    ["MEX", "Mexico"],
+    ["MEXICO", "Mexico"],
+  ]);
+
+  return aliases.get(normalized.toUpperCase()) || normalized;
 }
 
 function isPollutedICimsLocation(value) {
