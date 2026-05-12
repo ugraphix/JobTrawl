@@ -2,12 +2,13 @@
 
 JobTrawl is a local-first job search app that aggregates direct job listings from employer career pages and ATS job boards into one searchable interface. Instead of relying on job aggregators like LinkedIn or Indeed, it pulls openings from company-controlled sources, normalizes the results into a shared format, caches them locally, and lets you filter the combined list in one place.
 
-It is designed for two kinds of coverage:
+It is designed for three layers of coverage:
 
 - Curated sources you hand-pick in `config/sources.json`
-- Large generated ATS inventories imported into `config/generated-ats-sources.json`
+- Generated ATS sources in `config/generated-ats-sources.json`
+- A broad sanitized ATS source inventory in `config/sanitized-ats-source-inventory.json`
 
-The result is a local search console that can cover both carefully chosen employers and much broader ATS ecosystems.
+The result is a local search console that can cover carefully chosen employers, larger generated ATS inventories, and a broad source universe that is warmed into the local cache over time.
 
 ## Preview
 
@@ -20,12 +21,15 @@ The result is a local search console that can cover both carefully chosen employ
 - Searches many employer job sources in one request
 - Uses direct ATS APIs when they are available
 - Falls back to parsing public employer career pages when there is no clean public API
+- Loads curated sources first, then generated ATS sources, then the broad sanitized source inventory
 - Normalizes results from different systems into one shared job shape
 - Caches fetched jobs locally in SQLite for faster repeat searches
+- Includes a provider-limited and source-key-limited cache warmer for broad ATS coverage
 - Deduplicates the same job across overlapping sources by company + job ID / URL
 - Returns partial results if some sources fail or time out
 - Lets you narrow results by title, date, work arrangement, location, excluded companies, specific companies, or ATS/API provider type
 - Preserves jobs with missing posted dates in a separate expandable section instead of inflating strict date-filter counts
+- Separates verified U.S. jobs from unknown-location jobs and explicit non-U.S. drops
 - Flags real reposted jobs when posting history suggests they reappeared or refreshed
 - Includes an application tracker that saves files locally, generates listing PDFs, and syncs a local Excel workbook
 
@@ -33,12 +37,12 @@ The result is a local search console that can cover both carefully chosen employ
 
 At a high level, a search in JobTrawl works like this:
 
-1. JobTrawl loads its configured job sources and location lists.
+1. JobTrawl loads its configured job sources, broad sanitized ATS inventory, and location lists.
 2. When you run a search, it chooses which sources to search based on your settings:
    all default sources, specific companies, or selected ATS/API provider families.
 3. It checks the local cache first so it does not have to refetch every source every time.
-4. If fresh cached results are not available, it fetches jobs through the right adapter for that source.
-5. It converts all jobs into one shared format, applies your filters, removes duplicates, sorts the results, and shows them in one list.
+4. Browser searches do not live-fetch the full broad inventory. Large source batches are warmed separately into the cache.
+5. It converts all jobs into one shared format, applies your filters, removes duplicates, sorts the results, and shows verified, unknown-date, and unknown-location buckets separately.
 
 For most users, the important idea is simple: JobTrawl pulls direct listings from many company-controlled sources, standardizes them, and gives you one place to search them.
 
@@ -46,47 +50,48 @@ For most users, the important idea is simple: JobTrawl pulls direct listings fro
 
 ```mermaid
 flowchart TD
-    A["Open JobTrawl<br/>in your browser"] --> B["Run bootstrap request<br/>for startup data"]
-    B --> C["Load configured sources<br/>and location lists"]
-    C --> D["Build filters, companies,<br/>and source options"]
-    D --> E["Show the search form<br/>in the browser"]
+    A["Open JobTrawl<br/>in your browser"] --> B["Bootstrap API"]
+    B --> C["Load source layers<br/>curated + generated + sanitized ATS"]
+    C --> D["Load location lists<br/>and cache status"]
+    D --> E["Render search form<br/>and tracker state"]
 
-    E --> F["Submit a search"]
-    F --> G["Load the current<br/>source configuration"]
-    G --> H{"Which search<br/>mode is active?"}
-    H -->|All| I["Use the default<br/>source set"]
+    E --> F["Submit search"]
+    F --> G["Build filters<br/>keyword, recency, location, sources"]
+    G --> H{"Source selection"}
+    H -->|All sources| I["Use runtime<br/>source universe"]
     H -->|Companies| J["Limit to selected<br/>companies"]
-    H -->|ATS/API| K["Limit to selected<br/>ATS providers"]
-    I --> L["Check the local cache<br/>first"]
+    H -->|ATS/API families| K["Limit to selected<br/>providers"]
+
+    I --> L["Split selected sources"]
     J --> L
     K --> L
-    L --> M{"Is fresh cached<br/>data available?"}
+    L --> M["Curated and manual<br/>trusted sources"]
+    L --> N["Generated and sanitized<br/>broad ATS inventory"]
 
-    M -->|Yes| N["Read jobs from<br/>local cache"]
-    M -->|No| O{"Is this a generated<br/>inventory source?"}
-    O -->|Yes| P["Keyword-prefilter generated<br/>inventory and load cached jobs"]
-    O -->|No| Q["Use cached jobs first<br/>and refresh curated sources<br/>in the background when needed"]
+    M --> O["Use fresh cache first"]
+    O --> P{"Needs bounded<br/>live refresh?"}
+    P -->|Yes| Q["Fetch priority sources<br/>through adapters"]
+    P -->|No| R["Use cached curated jobs"]
+    Q --> S["Normalize jobs and write<br/>to SQLite cache"]
+    R --> T["Candidate jobs"]
+    S --> T
 
-    Q --> R{"Does the source use<br/>an API or a career page?"}
-    R -->|API| S["Call the provider endpoint<br/>and map the response"]
-    R -->|Career page| T["Fetch public page data<br/>and extract jobs"]
+    N --> U["Read source-scoped<br/>cached candidates"]
+    U --> V["Apply SQL keyword and<br/>recency prefilters before caps"]
+    V --> T
 
-    S --> U["Normalize jobs into<br/>one shared format"]
-    T --> U
-    U --> V["Write jobs back to<br/>local cache"]
-    N --> W["Apply the user's<br/>search filters"]
-    P --> W
-    V --> W
-    W --> X["Split unknown-date jobs<br/>into a separate bucket"]
-    X --> Y["Remove duplicate<br/>job listings"]
-    Y --> Z["Sort by the newest<br/>known date"]
-    Z --> AA["Return results and<br/>source health data"]
+    T --> W["Apply full search filters<br/>keyword, recency, arrangement"]
+    W --> X["Classify location<br/>verified U.S. / unknown / non-U.S."]
+    X --> Y["Split unknown-date and<br/>unknown-location sections"]
+    Y --> Z["Deduplicate and sort"]
+    Z --> AA["Return jobs, counts,<br/>source health, coverage"]
 
-    AA --> AB["Save a job to the<br/>application tracker"]
-    AB --> AC["Store row data locally<br/>and create/update job folder"]
-    AC --> AD["Upload resume, cover letter,<br/>and listing PDF copies"]
-    AD --> AE["Sync tracker rows into the<br/>local Excel workbook"]
-    AE --> AF["Open workbook export with<br/>file hyperlinks for saved assets"]
+    AA --> AB["Render verified headline<br/>and expandable unknown sections"]
+    AB --> AC["Save jobs to<br/>application tracker"]
+    AC --> AD["Store local row data,<br/>files, PDFs, workbook links"]
+
+    CW["Cache warmer script<br/>provider/source-key batches"] -.-> S
+    CW -.-> U
 ```
 
 The chart is intentionally simplified so it stays readable in GitHub's Mermaid viewer. The sections below explain the same flow in more detail.
@@ -96,7 +101,7 @@ The chart is intentionally simplified so it stays readable in GitHub's Mermaid v
 The UI in `public/index.html` and `public/app.js` supports these filters:
 
 - `Keyword or title`
-- `Strict keyword search` or `Loose keyword search`
+- `Loose keyword search` by default, or `Strict keyword search`
 - `Posted within`: `24h`, `3d`, `7d`, `14d`, `30d`
 - `Work arrangement`: `remote`, `hybrid`, `onsite`
 - `Location mode`
@@ -119,7 +124,10 @@ The UI in `public/index.html` and `public/app.js` supports these filters:
 - Arrangement filtering normalizes values to `remote`, `hybrid`, `onsite`, or `unknown`.
 - Location filtering is text-based unless the distance filter is active.
 - The distance filter uses browser coordinates plus a built-in location alias map for supported metros.
-- `U.S. jobs only` keeps postings that clearly look U.S.-based and can optionally keep unknown-location jobs in a separate section.
+- `U.S. jobs only` counts only verified U.S. job locations in the headline.
+- Jobs with explicit non-U.S. locations are dropped from U.S.-only results.
+- Jobs without enough location data stay in a separate `Jobs with unknown location` section and do not inflate the verified U.S. count.
+- Employer headquarters or company identity never prove that a job is U.S.-based.
 - Customized search can either filter to an included company list or limit the search to selected ATS/API provider families.
 - Excluded companies are filtered out after normalization.
 - Results are deduplicated across overlapping sources, primarily by company plus job ID or normalized apply URL.
@@ -207,6 +215,14 @@ There is no single public API for every ATS and every employer website. JobTrawl
 
 That hybrid approach is the main reason the project can support a wide range of sources.
 
+Recent adapter correctness work focuses on preserving source-provided location data instead of guessing:
+
+- BambooHR reads active `/careers/list` JSON boards when available.
+- Workday preserves multi-location detail data and avoids vague labels such as `2 Locations` when real locations exist.
+- iCIMS reads detail-page JSON-LD job locations.
+- Manatal passes structured `city`, `state`, and `country` API fields into normalization.
+- Explicit non-U.S. location text, such as `Remote from Bulgaria`, stays out of verified U.S. results.
+
 ## What happens after jobs are found
 
 Regardless of where a job comes from, JobTrawl converts it into a shared structure with fields such as:
@@ -230,10 +246,14 @@ After that, JobTrawl:
 
 - applies your filters
 - preserves unknown-date matches separately when a strict recency filter is active
+- preserves unknown-location matches separately when `U.S. jobs only` is active
+- drops explicit non-U.S. locations from verified U.S. results
 - counts matches per source
 - removes duplicates
 - sorts results by the newest known date first
 - shows source health information alongside the results
+
+Location correctness is deliberately conservative. A U.S.-based employer does not make every job a U.S. job. Remote roles without a country stay unknown. Multi-location jobs can count as verified U.S. only when at least one actual job location is U.S., not when compensation text, employer identity, or a vague location count merely hints at it.
 
 ## Local cache
 
@@ -246,9 +266,11 @@ Cache behavior:
 
 - each source keeps sync state and last-error tracking
 - searches can reuse fresh cached results
-- stale sources can be refreshed
-- generated inventory sources are included by default only after they have been synced locally
-- large generated ATS inventories are keyword-prefiltered before cached postings are loaded
+- priority and curated sources can be refreshed without sweeping the whole source universe
+- broad generated inventory sources are searched from cache instead of live-fetched inside one browser request
+- large generated ATS inventories are source-scoped and keyword-prefiltered before cached postings are loaded
+- dated and unknown-date cache candidate pools are capped separately so one group does not starve the other
+- targeted cache warming can run by provider, keyword-priority strategy, or source-key file
 - expired postings are pruned automatically
 
 There are also API endpoints for cache status and manual sync:
@@ -258,23 +280,42 @@ There are also API endpoints for cache status and manual sync:
 
 ## Source configuration
 
-JobTrawl merges two source files:
+JobTrawl merges source files in trust order:
 
 - `config/sources.json`: curated, hand-maintained sources
-- `config/generated-ats-sources.json`: generated ATS inventory
+- `config/generated-ats-sources.json`: generated ATS inventory from earlier source discovery
+- `config/sanitized-ats-source-inventory.json`: broad sanitized ATS source inventory
 
-On the current branch, the repo contains:
+Curated sources win on duplicate source keys, existing generated sources win over broad sanitized sources, and the broad inventory never overrides a more trusted record. `sourceKey` values from generated files are mapped into runtime `key` values before adapters receive the source.
+
+The broad sanitized inventory is source-level only. It is intended to include safe fetch configuration such as provider, source key, company, careers URL, API URL, and adapter fields. It must not include job rows, local file paths, vendor database paths, secrets, cookies, captured JavaScript bundles, or local machine metadata.
+
+On the current branch, the runtime source universe is roughly:
 
 - about `120` curated sources
 - `10k+` generated ATS sources
+- about `32k` total sources when the sanitized inventory is present
 
-Generated inventory is created from the imported reference database using:
+Generated ATS inventory can still be imported from the older reference flow:
 
 - `npm run import:generated-ats`
 
-and can be synced into the local cache in batches with:
+The broad sanitized inventory is generated and verified with:
 
-- `npm run sync:generated-ats`
+```powershell
+node scripts/generate-sanitized-ats-source-inventory.mjs
+node scripts/validate-sanitized-ats-source-inventory.mjs
+```
+
+Cache warming is intentionally separate from browser search. Use report-only mode first, then warm small provider or source-key batches:
+
+```powershell
+node scripts/warm-ats-source-cache.mjs --report-only --provider bamboohr --limit 50
+node scripts/warm-ats-source-cache.mjs --provider workday --limit 50 --strategy keyword-priority --keyword "product manager" --force
+node scripts/warm-ats-source-cache.mjs --source-key-file data/my-target-sources.txt --timeout-ms 60000 --force
+```
+
+Files under `data/`, cache databases, vendor discovery databases, retry files, reports, and cache-warm progress artifacts are local working data and should not be committed unless a specific small artifact is intentionally promoted.
 
 ## Supported provider families
 
@@ -511,10 +552,10 @@ Provider-specific fields vary by adapter. A few common examples:
 ## Project structure
 
 ```text
-config/                     Source and location configuration
-data/                       Local cache database and logs
+config/                     Curated, generated, sanitized source, and location configuration
+data/                       Local cache database, reports, retry lists, and logs
 public/                     Browser UI
-scripts/                    Source import and sync helpers
+scripts/                    Source inventory, validation, cache warming, and sync helpers
 src/server.js               HTTP server and API routes
 src/lib/search.js           Search pipeline
 src/lib/filters.js          Keyword, recency, arrangement, and location filters
@@ -529,8 +570,10 @@ src/lib/adapters/           ATS and career-page adapters
 - Career-page scraping is inherently more brittle than API integrations.
 - Posted dates are not always available; JobTrawl can keep unknown-date jobs in separate sections.
 - Work arrangement and location metadata are inconsistent across employers, so normalization is best-effort.
+- `U.S. jobs only` is intentionally strict: explicit foreign locations are dropped, and ambiguous locations stay separate.
+- Browser searches should not live-fetch the full broad inventory. Warm large source sets through the cache warmer first.
 - Source failures do not block the whole search; the app returns partial results when possible.
 
 ## Summary
 
-JobTrawl is a local search app for direct employer listings. It combines ATS APIs and public career-page scraping, standardizes the results, caches them locally, and gives you one place to search across both curated sources and larger imported ATS inventories.
+JobTrawl is a local search app for direct employer listings. It combines ATS APIs and public career-page scraping, standardizes the results, caches them locally, and gives you one place to search across curated sources, generated ATS inventories, and a broad sanitized source universe.
