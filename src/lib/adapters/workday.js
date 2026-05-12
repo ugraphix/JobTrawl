@@ -526,7 +526,10 @@ function parseWorkdayLocationText(value, countryHint = null) {
   let city = null;
   let region = null;
 
-  if (country === "US" && parts.length >= 2) {
+  if (country === "US" && parts.length >= 3 && normalizeWorkdayCountry(parts[0]) === "US") {
+    region = normalizeUsState(parts[1]);
+    city = cleanWorkdayCity(parts.slice(2).join(", "));
+  } else if (country === "US" && parts.length >= 2) {
     city = cleanWorkdayCity(parts[0]);
     region = normalizeUsState(parts[1]);
   } else if (country === "US") {

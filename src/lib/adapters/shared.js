@@ -703,12 +703,12 @@ function parseLocationFragment(fragment) {
     return { locationLabel: "United States", city: null, region: null, country: "US" };
   }
 
-  if (/^(Philippines|India|Canada|Ireland|Israel|United Kingdom|UK|Thailand|Germany|Switzerland|Austria|Spain|China|Luxembourg|Italy|Greece)$/i.test(value)) {
+  if (/^(Philippines|India|Canada|Ireland|Israel|United Kingdom|UK|Thailand|Germany|Switzerland|Austria|Spain|China|Luxembourg|Italy|Greece|Bulgaria|South Africa|United Arab Emirates|UAE|Oman|Hong Kong|Mexico|Brazil|Colombia)$/i.test(value)) {
     const country = capitalizeLocationWord(value);
     return { locationLabel: country, city: null, region: null, country };
   }
 
-  if (/^Remote,\s*(United States|US|USA|Philippines|India|Canada|Ireland|Israel|United Kingdom|UK|Thailand|Germany|Switzerland|Austria|Spain|China|Luxembourg|Italy|Greece)$/i.test(value)) {
+  if (/^Remote,\s*(United States|US|USA|Philippines|India|Canada|Ireland|Israel|United Kingdom|UK|Thailand|Germany|Switzerland|Austria|Spain|China|Luxembourg|Italy|Greece|Bulgaria|South Africa|United Arab Emirates|UAE|Oman|Hong Kong|Mexico|Brazil|Colombia)$/i.test(value)) {
     const countryMatch = value.match(/^Remote,\s*(.+)$/i)?.[1] || "";
     const normalizedCountry = normalizeCountryValue(countryMatch);
     return {
@@ -874,6 +874,30 @@ function normalizeCountryValue(value) {
   }
   if (/^Greece$/i.test(normalized)) {
     return "Greece";
+  }
+  if (/^Bulgaria$/i.test(normalized)) {
+    return "Bulgaria";
+  }
+  if (/^South Africa$/i.test(normalized)) {
+    return "South Africa";
+  }
+  if (/^(United Arab Emirates|UAE)$/i.test(normalized)) {
+    return "United Arab Emirates";
+  }
+  if (/^Oman$/i.test(normalized)) {
+    return "Oman";
+  }
+  if (/^Hong Kong$/i.test(normalized)) {
+    return "Hong Kong";
+  }
+  if (/^Mexico$/i.test(normalized)) {
+    return "Mexico";
+  }
+  if (/^Brazil$/i.test(normalized)) {
+    return "Brazil";
+  }
+  if (/^Colombia$/i.test(normalized)) {
+    return "Colombia";
   }
   return null;
 }
