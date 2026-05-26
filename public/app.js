@@ -671,7 +671,7 @@ function renderResults(payload, filters, locationMode) {
 
   if (datedAndUnknownDateJobs.length === 0) {
     resultsNode.className = "results-list empty-state";
-    resultsNode.textContent = "No jobs matched the current filters. Try widening the recency window, changing arrangements, or using fewer exclusions.";
+    resultsNode.textContent = buildNoResultsMessage(filters);
     return;
   }
 
@@ -1286,6 +1286,14 @@ function getLoadingTimelineSteps(progress = {}) {
     index: index + 1,
     state: index < activeIndex ? "done" : index === activeIndex ? "active" : "pending",
   }));
+}
+
+function buildNoResultsMessage(filters = {}) {
+  if (filters.usOnly && filters.recency === "24h") {
+    return "No verified U.S. jobs matched these filters in the last 24 hours. Try Last 7 days, include unknown-location jobs, or loosen your filters.";
+  }
+
+  return "No jobs matched the current filters. Try widening the recency window, changing arrangements, or using fewer exclusions.";
 }
 
 function formatLocationGroup(group) {
