@@ -8,7 +8,11 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "import:generated-ats": "node scripts/import-generated-ats.js",
-    "sync:generated-ats": "node scripts/sync-generated-ats.js"
+    "sync:generated-ats": "node scripts/sync-generated-ats.js",
+    "refresh:plan": "node scripts/run-daily-cache-refresh.mjs --profile daily --plan",
+    "refresh:daily": "node scripts/run-daily-cache-refresh.mjs --profile daily --run",
+    "refresh:weekly-plan": "node scripts/run-daily-cache-refresh.mjs --profile weekly --plan",
+    "refresh:targeted-plan": "node scripts/run-daily-cache-refresh.mjs --profile targeted --plan"
   },
   "engines": {
     "node": ">=20"
