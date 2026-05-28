@@ -35,6 +35,7 @@ const BULK_DATED_RESULT_LIMIT = Math.max(500, Number(process.env.BULK_DATED_RESU
 
 let database = null;
 let cacheBackend = "sqlite";
+let tempSearchSourceKeysSignature = "";
 let jsonCache = {
   postings: [],
   sourceState: {},
@@ -98,6 +99,20 @@ export function initCacheDb() {
       CREATE INDEX IF NOT EXISTS idx_cached_postings_company ON cached_postings(company);
       CREATE INDEX IF NOT EXISTS idx_cached_postings_posted_at ON cached_postings(posted_at);
       CREATE INDEX IF NOT EXISTS idx_cached_postings_expires_at ON cached_postings(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_cached_postings_source_recency ON cached_postings(source_key, COALESCE(posted_at, updated_at));
+      CREATE INDEX IF NOT EXISTS idx_cached_postings_source_cached_at ON cached_postings(source_key, cached_at);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS cached_postings_fts USING fts5(
+        posting_id UNINDEXED,
+        source_key UNINDEXED,
+        title,
+        team,
+        department,
+        company,
+        description_snippet,
+        search_text,
+        raw_location_text
+      );
 
       CREATE TABLE IF NOT EXISTS source_cache_state (
         source_key TEXT PRIMARY KEY,
@@ -127,6 +142,7 @@ export function initCacheDb() {
       );
     `);
     cacheBackend = "sqlite";
+    ensureCachedPostingsFtsIndex();
   } catch (error) {
     database = null;
     cacheBackend = "json";
@@ -603,6 +619,7 @@ function replaceSourceJobs(db, source, jobs, now) {
   try {
     updateSqlitePostingHistory(db, source, dedupedJobs, now, previousExternalIds);
     db.prepare("DELETE FROM cached_postings WHERE source_key = ?").run(source.key);
+    db.prepare("DELETE FROM cached_postings_fts WHERE source_key = ?").run(source.key);
 
     const statement = db.prepare(`
       INSERT INTO cached_postings (
@@ -614,9 +631,15 @@ function replaceSourceJobs(db, source, jobs, now) {
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `);
+    const ftsStatement = db.prepare(`
+      INSERT INTO cached_postings_fts (
+        posting_id, source_key, title, team, department, company,
+        description_snippet, search_text, raw_location_text
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
 
     for (const job of dedupedJobs) {
-      statement.run(
+      const result = statement.run(
         source.key,
         source.provider,
         job.company || source.company,
@@ -641,6 +664,17 @@ function replaceSourceJobs(db, source, jobs, now) {
         job.rawLocationText || null,
         now,
         now + DEFAULT_TTL_MS
+      );
+      ftsStatement.run(
+        Number(result?.lastInsertRowid || 0),
+        source.key,
+        job.title || "Untitled role",
+        job.team || null,
+        job.department || null,
+        job.company || source.company,
+        job.descriptionSnippet || null,
+        job.searchText || job.descriptionSnippet || null,
+        job.rawLocationText || null
       );
     }
 
@@ -701,6 +735,67 @@ function recordSourceState(db, source, state) {
     state.lastJobCount || 0,
     state.lastError || null
   );
+}
+
+function ensureCachedPostingsFtsIndex() {
+  if (cacheBackend !== "sqlite" || !database) {
+    return;
+  }
+
+  try {
+    const ftsColumns = database.prepare("PRAGMA table_info(cached_postings_fts)").all()
+      .map((column) => String(column?.name || ""));
+    if (!ftsColumns.includes("search_text")) {
+      database.prepare("DROP TABLE IF EXISTS cached_postings_fts").run();
+      database.exec(`
+        CREATE VIRTUAL TABLE cached_postings_fts USING fts5(
+          posting_id UNINDEXED,
+          source_key UNINDEXED,
+          title,
+          team,
+          department,
+          company,
+          description_snippet,
+          search_text,
+          raw_location_text
+        );
+      `);
+    }
+
+    const cachedCount = Number(database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM cached_postings
+      WHERE expires_at > ?
+    `).get(Date.now())?.count || 0);
+    const ftsCount = Number(database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM cached_postings_fts
+    `).get()?.count || 0);
+    if (cachedCount === ftsCount) {
+      return;
+    }
+
+    database.exec("BEGIN");
+    try {
+      database.prepare("DELETE FROM cached_postings_fts").run();
+      database.prepare(`
+        INSERT INTO cached_postings_fts (
+          posting_id, source_key, title, team, department, company,
+          description_snippet, search_text, raw_location_text
+        )
+        SELECT id, source_key, title, team, department, company,
+          description_snippet, search_text, raw_location_text
+        FROM cached_postings
+        WHERE expires_at > ?
+      `).run(Date.now());
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+  } catch (error) {
+    syncStatus.lastError = `Unable to refresh search index: ${error?.message || error}`;
+  }
 }
 
 function isSourceStale(sourceKey) {
@@ -908,133 +1003,7 @@ function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
   if (cacheBackend === "sqlite") {
     try {
       if (normalizedKeys.length >= BULK_CACHE_ALL_SOURCES_THRESHOLD) {
-        const sourceChunks = buildSourceKeyChunks(normalizedKeys);
-
-        if (recencyPrefilter) {
-          const keywordSqlConfig = buildKeywordSqlConfig({
-            keywordPrefilter,
-            broadSearch: true,
-          });
-          const keywordClause = keywordPrefilter
-            ? ` AND (${buildGeneratedInventoryKeywordSqlClause(keywordSqlConfig)})`
-            : "";
-          const keywordParams = buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig);
-          const unknownDateLimit = keywordPrefilter
-            ? BULK_KEYWORD_UNKNOWN_DATE_LIMIT
-            : BULK_UNKNOWN_DATE_LIMIT;
-          const datedRows = [];
-          const unknownRows = [];
-          for (const chunk of sourceChunks) {
-            const placeholders = chunk.map(() => "?").join(", ");
-            const datedStatement = database.prepare(`
-              SELECT
-                postings.*,
-                history.first_seen_at,
-                history.last_seen_at,
-                history.missing_since,
-                history.first_posted_at,
-                history.last_posted_at AS history_last_posted_at,
-                history.last_reappeared_at,
-                history.reappearance_count,
-                history.last_date_refresh_at,
-                history.date_refresh_count
-              FROM cached_postings AS postings
-              LEFT JOIN posting_history AS history
-                ON history.source_key = postings.source_key
-               AND history.external_id = postings.external_id
-              WHERE postings.source_key IN (${placeholders})
-                AND expires_at > ?
-                AND COALESCE(postings.posted_at, postings.updated_at) >= ?
-                ${keywordClause}
-              ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
-              LIMIT ${BULK_DATED_RESULT_LIMIT}
-            `);
-            const unknownStatement = database.prepare(`
-              SELECT
-                postings.*,
-                history.first_seen_at,
-                history.last_seen_at,
-                history.missing_since,
-                history.first_posted_at,
-                history.last_posted_at AS history_last_posted_at,
-                history.last_reappeared_at,
-                history.reappearance_count,
-                history.last_date_refresh_at,
-                history.date_refresh_count
-              FROM cached_postings AS postings
-              LEFT JOIN posting_history AS history
-                ON history.source_key = postings.source_key
-               AND history.external_id = postings.external_id
-              WHERE postings.source_key IN (${placeholders})
-                AND expires_at > ?
-                AND postings.posted_at IS NULL
-                AND postings.updated_at IS NULL
-                ${keywordClause}
-              ORDER BY postings.cached_at DESC
-              LIMIT ${unknownDateLimit}
-            `);
-            datedRows.push(...datedStatement.all(
-              ...chunk,
-              Date.now(),
-              ...buildCachedRecencySqlParams(recencyPrefilter),
-              ...keywordParams
-            ));
-            unknownRows.push(...unknownStatement.all(...chunk, Date.now(), ...keywordParams));
-          }
-          const datedJobs = datedRows
-            .map(mapCachedRowToJob)
-            .sort(sortCachedJobsForDisplay)
-            .slice(0, BULK_DATED_RESULT_LIMIT);
-          const unknownJobs = unknownRows
-            .map(mapCachedRowToJob)
-            .sort(sortCachedJobsForDisplay)
-            .slice(0, unknownDateLimit);
-          return [...datedJobs, ...unknownJobs]
-            .filter((job) => matchesGeneratedInventoryKeywordPrefilter(job, keywordPrefilter));
-        }
-
-        const keywordSqlConfig = buildKeywordSqlConfig({
-          keywordPrefilter,
-          broadSearch: true,
-        });
-        const keywordClause = keywordPrefilter
-          ? ` AND (${buildGeneratedInventoryKeywordSqlClause(keywordSqlConfig)})`
-          : "";
-        const rows = [];
-        for (const chunk of sourceChunks) {
-          const placeholders = chunk.map(() => "?").join(", ");
-          const statement = database.prepare(`
-            SELECT
-              postings.*,
-              history.first_seen_at,
-              history.last_seen_at,
-              history.missing_since,
-              history.first_posted_at,
-              history.last_posted_at AS history_last_posted_at,
-              history.last_reappeared_at,
-              history.reappearance_count,
-              history.last_date_refresh_at,
-              history.date_refresh_count
-            FROM cached_postings AS postings
-            LEFT JOIN posting_history AS history
-              ON history.source_key = postings.source_key
-             AND history.external_id = postings.external_id
-            WHERE postings.source_key IN (${placeholders})
-              AND expires_at > ?
-              ${keywordClause}
-            ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
-            LIMIT ${BULK_DATED_RESULT_LIMIT}
-          `);
-          rows.push(...statement.all(
-            ...chunk,
-            Date.now(),
-            ...buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig)
-          ));
-        }
-        return rows
-          .map(mapCachedRowToJob)
-          .sort(sortCachedJobsForDisplay)
-          .slice(0, BULK_DATED_RESULT_LIMIT);
+        return readBulkCachedJobsForSourceKeys(normalizedKeys, keywordPrefilter, recencyPrefilter);
       }
 
       const allRows = [];
@@ -1090,6 +1059,184 @@ function readCachedJobsForSourceKeys(sourceKeys, filters = {}) {
 
   const jsonRows = readJsonCachedRowsForSourceKeys(normalizedKeys, keywordPrefilter, recencyPrefilter);
   return jsonRows.map(mapCachedRowToJob);
+}
+
+function readBulkCachedJobsForSourceKeys(sourceKeys, keywordPrefilter = null, recencyPrefilter = null) {
+  const keywordSqlConfig = buildKeywordSqlConfig({
+    keywordPrefilter,
+    broadSearch: true,
+  });
+  const keywordClause = keywordPrefilter
+    ? ` AND (${buildGeneratedInventoryKeywordSqlClause(keywordSqlConfig)})`
+    : "";
+  const keywordParams = buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig);
+  const ftsQuery = keywordPrefilter ? buildCachedPostingsFtsQuery(keywordPrefilter) : "";
+  const useFts = Boolean(ftsQuery);
+  const keywordJoinClause = "";
+  const ftsKeywordClause = useFts
+    ? ` AND postings.id IN (
+        SELECT CAST(posting_id AS INTEGER)
+        FROM cached_postings_fts
+        WHERE cached_postings_fts MATCH ?
+      )`
+    : keywordClause;
+  const activeKeywordParams = useFts ? [ftsQuery] : keywordParams;
+  const now = Date.now();
+
+  database.exec(`
+    CREATE TEMP TABLE IF NOT EXISTS temp_search_source_keys (
+      source_key TEXT PRIMARY KEY
+    )
+  `);
+  const sourceKeysSignature = buildSourceKeysSignature(sourceKeys);
+  if (sourceKeysSignature !== tempSearchSourceKeysSignature) {
+    database.prepare("DELETE FROM temp_search_source_keys").run();
+
+    const insertSourceKey = database.prepare("INSERT OR IGNORE INTO temp_search_source_keys (source_key) VALUES (?)");
+    database.exec("BEGIN");
+    try {
+      for (const sourceKey of sourceKeys) {
+        insertSourceKey.run(sourceKey);
+      }
+      database.exec("COMMIT");
+      tempSearchSourceKeysSignature = sourceKeysSignature;
+    } catch (error) {
+      database.exec("ROLLBACK");
+      tempSearchSourceKeysSignature = "";
+      throw error;
+    }
+  }
+
+  if (recencyPrefilter) {
+      const unknownDateLimit = keywordPrefilter
+        ? BULK_KEYWORD_UNKNOWN_DATE_LIMIT
+        : BULK_UNKNOWN_DATE_LIMIT;
+      const datedStatement = database.prepare(`
+        SELECT
+          postings.*,
+          history.first_seen_at,
+          history.last_seen_at,
+          history.missing_since,
+          history.first_posted_at,
+          history.last_posted_at AS history_last_posted_at,
+          history.last_reappeared_at,
+          history.reappearance_count,
+          history.last_date_refresh_at,
+          history.date_refresh_count
+        FROM cached_postings AS postings
+        INNER JOIN temp_search_source_keys AS selected
+          ON selected.source_key = postings.source_key
+        ${keywordJoinClause}
+        LEFT JOIN posting_history AS history
+          ON history.source_key = postings.source_key
+         AND history.external_id = postings.external_id
+        WHERE postings.expires_at > ?
+          AND COALESCE(postings.posted_at, postings.updated_at) >= ?
+          ${ftsKeywordClause}
+        ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+        LIMIT ${BULK_DATED_RESULT_LIMIT}
+      `);
+      const unknownStatement = database.prepare(`
+        SELECT
+          postings.*,
+          history.first_seen_at,
+          history.last_seen_at,
+          history.missing_since,
+          history.first_posted_at,
+          history.last_posted_at AS history_last_posted_at,
+          history.last_reappeared_at,
+          history.reappearance_count,
+          history.last_date_refresh_at,
+          history.date_refresh_count
+        FROM cached_postings AS postings
+        INNER JOIN temp_search_source_keys AS selected
+          ON selected.source_key = postings.source_key
+        ${keywordJoinClause}
+        LEFT JOIN posting_history AS history
+          ON history.source_key = postings.source_key
+         AND history.external_id = postings.external_id
+        WHERE postings.expires_at > ?
+          AND postings.posted_at IS NULL
+          AND postings.updated_at IS NULL
+          ${ftsKeywordClause}
+        ORDER BY postings.cached_at DESC
+        LIMIT ${unknownDateLimit}
+      `);
+      const datedJobs = datedStatement.all(
+        now,
+        ...buildCachedRecencySqlParams(recencyPrefilter),
+        ...activeKeywordParams
+      ).map(mapCachedRowToJob);
+      const unknownJobs = unknownStatement.all(now, ...activeKeywordParams).map(mapCachedRowToJob);
+      return [...datedJobs, ...unknownJobs]
+        .sort(sortCachedJobsForDisplay)
+        .filter((job) => matchesGeneratedInventoryKeywordPrefilter(job, keywordPrefilter));
+  }
+
+  const statement = database.prepare(`
+      SELECT
+        postings.*,
+        history.first_seen_at,
+        history.last_seen_at,
+        history.missing_since,
+        history.first_posted_at,
+        history.last_posted_at AS history_last_posted_at,
+        history.last_reappeared_at,
+        history.reappearance_count,
+        history.last_date_refresh_at,
+        history.date_refresh_count
+      FROM cached_postings AS postings
+      INNER JOIN temp_search_source_keys AS selected
+        ON selected.source_key = postings.source_key
+      ${keywordJoinClause}
+      LEFT JOIN posting_history AS history
+        ON history.source_key = postings.source_key
+       AND history.external_id = postings.external_id
+      WHERE postings.expires_at > ?
+        ${ftsKeywordClause}
+      ORDER BY COALESCE(postings.posted_at, postings.updated_at, '') DESC
+      LIMIT ${BULK_DATED_RESULT_LIMIT}
+    `);
+  return statement.all(now, ...activeKeywordParams)
+    .map(mapCachedRowToJob)
+    .sort(sortCachedJobsForDisplay)
+    .slice(0, BULK_DATED_RESULT_LIMIT);
+}
+
+function buildSourceKeysSignature(sourceKeys) {
+  let hash = 2166136261;
+  for (const sourceKey of sourceKeys) {
+    const text = String(sourceKey || "");
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    hash ^= 10;
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${sourceKeys.length}:${hash >>> 0}`;
+}
+
+function buildCachedPostingsFtsQuery(keywordPrefilter) {
+  const phrases = Array.isArray(keywordPrefilter?.phrases) && keywordPrefilter.phrases.length > 0
+    ? keywordPrefilter.phrases
+    : [keywordPrefilter?.phrase].filter(Boolean);
+  const phraseTerms = phrases
+    .map((phrase) => String(phrase || "").trim())
+    .filter(Boolean)
+    .map((phrase) => `"${phrase.replace(/"/g, "\"\"")}"`);
+  const wordTerms = Array.isArray(keywordPrefilter?.words)
+    ? keywordPrefilter.words
+      .map((word) => String(word || "").toLowerCase().replace(/[^a-z0-9]/g, ""))
+      .filter(Boolean)
+    : [];
+  const wordClause = wordTerms.length > 0
+    ? `(${[...new Set(wordTerms)].join(" AND ")})`
+    : "";
+  const queryTerms = [...new Set([...phraseTerms, wordClause].filter(Boolean))];
+  return queryTerms.length > 0
+    ? `{title team department company} : (${queryTerms.join(" OR ")})`
+    : "";
 }
 
 function buildCachedRecencyPrefilter(filters = {}) {
@@ -1588,6 +1735,9 @@ function buildGeneratedInventoryKeywordPrefilter(filters = {}) {
     return null;
   }
 
+  const phrases = expandKeywordQueriesForSearch(keyword)
+    .map((phrase) => String(phrase || "").trim().toLowerCase())
+    .filter(Boolean);
   const words = [...new Set(
     keyword
       .split(/\s+/)
@@ -1601,6 +1751,7 @@ function buildGeneratedInventoryKeywordPrefilter(filters = {}) {
 
   return {
     phrase: keyword,
+    phrases: phrases.length > 0 ? phrases : [keyword],
     words,
     searchInDescription: filters?.keywordScope === "title_and_description" && words.length <= 1,
   };
@@ -1621,6 +1772,7 @@ function buildKeywordSqlConfig({ keywordPrefilter, broadSearch = false } = {}) {
         "LOWER(COALESCE(postings.company, ''))",
       ],
       phrase: keywordPrefilter.phrase,
+      phrases: keywordPrefilter.phrases || [keywordPrefilter.phrase],
       words: keywordPrefilter.words,
     };
   }
@@ -1637,6 +1789,7 @@ function buildKeywordSqlConfig({ keywordPrefilter, broadSearch = false } = {}) {
     phraseExpression: textExpression,
     wordExpressions: keywordPrefilter.searchInDescription ? [textExpression] : titleExpressions,
     phrase: keywordPrefilter.phrase,
+    phrases: keywordPrefilter.phrases || [keywordPrefilter.phrase],
     words: keywordPrefilter.words,
   };
 }
@@ -1646,7 +1799,12 @@ function buildGeneratedInventoryKeywordSqlClause(keywordSqlConfig) {
     return "1=1";
   }
 
-  const phraseClause = `${keywordSqlConfig.phraseExpression} LIKE ?`;
+  const phrases = Array.isArray(keywordSqlConfig.phrases) && keywordSqlConfig.phrases.length > 0
+    ? keywordSqlConfig.phrases
+    : [keywordSqlConfig.phrase];
+  const phraseClause = phrases
+    .map(() => `${keywordSqlConfig.phraseExpression} LIKE ?`)
+    .join(" OR ");
   const wordClause = keywordSqlConfig.words
     .map(() => `(${keywordSqlConfig.wordExpressions.map((expression) => `${expression} LIKE ?`).join(" OR ")})`)
     .join(" AND ");
@@ -1658,7 +1816,10 @@ function buildGeneratedInventoryKeywordSqlParams(keywordSqlConfig) {
     return [];
   }
 
-  const params = [`%${keywordSqlConfig.phrase}%`];
+  const phrases = Array.isArray(keywordSqlConfig.phrases) && keywordSqlConfig.phrases.length > 0
+    ? keywordSqlConfig.phrases
+    : [keywordSqlConfig.phrase];
+  const params = phrases.map((phrase) => `%${phrase}%`);
   for (const word of keywordSqlConfig.words) {
     for (let index = 0; index < keywordSqlConfig.wordExpressions.length; index += 1) {
       params.push(`%${word}%`);
@@ -1689,7 +1850,11 @@ function matchesGeneratedInventoryKeywordPrefilter(posting, keywordPrefilter) {
     return false;
   }
 
-  if (titleHaystack.includes(keywordPrefilter.phrase)) {
+  const phrases = Array.isArray(keywordPrefilter.phrases) && keywordPrefilter.phrases.length > 0
+    ? keywordPrefilter.phrases
+    : [keywordPrefilter.phrase];
+
+  if (phrases.some((phrase) => titleHaystack.includes(phrase))) {
     return true;
   }
 
@@ -1701,7 +1866,7 @@ function matchesGeneratedInventoryKeywordPrefilter(posting, keywordPrefilter) {
     return false;
   }
 
-  if (extendedHaystack.includes(keywordPrefilter.phrase)) {
+  if (phrases.some((phrase) => extendedHaystack.includes(phrase))) {
     return true;
   }
 
