@@ -17,9 +17,9 @@ import {
   getCachedSourceKeys,
   getCacheStatus,
   initCacheDb,
+  loadCachedSourceResultsForSearch,
   loadGeneratedInventorySearchResult,
   loadSourceResultsForSearch,
-  safeReadCachedJobsForSource,
 } from "./lib/cache-db.js";
 import {
   APPLICATION_STATUSES,
@@ -396,13 +396,24 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "POST" && request.url === "/api/search") {
+      const searchTimings = {};
+      const searchStartedAt = Date.now();
+      const markSearchTiming = (name, started) => {
+        searchTimings[name] = Date.now() - started;
+      };
+      let stepStarted = Date.now();
       const body = await readJson(request);
+      markSearchTiming("requestParseMs", stepStarted);
+      stepStarted = Date.now();
       const allSources = await loadSourceConfig();
+      markSearchTiming("sourceConfigMs", stepStarted);
+      stepStarted = Date.now();
       const sources = filterSources(allSources, body);
       const curatedSources = sources.filter((source) => !isGeneratedAtsSource(source));
       const generatedInventorySources = sources.filter((source) => isGeneratedAtsSource(source));
       const effectiveSearchSourceCount = curatedSources.length + (generatedInventorySources.length > 0 ? 1 : 0);
       const filters = buildSearchFilters(body);
+      markSearchTiming("sourceSelectionMs", stepStarted);
       const searchRequestId = typeof body.searchRequestId === "string" && body.searchRequestId.trim()
         ? body.searchRequestId.trim()
         : "";
@@ -423,17 +434,29 @@ const server = createServer(async (request, response) => {
         });
       }
 
-        const hasSeededCuratedCache = curatedSources.some((source) => safeReadCachedJobsForSource(source.key).length > 0);
+        const isBroadSourceSearch = body.sourceSelectionMode !== "custom" && curatedSources.length > 25;
+        stepStarted = Date.now();
+        const cachedSourceKeys = isBroadSourceSearch ? null : getCachedSourceKeys();
+        const hasSeededCuratedCache = isBroadSourceSearch
+          ? true
+          : curatedSources.some((source) => cachedSourceKeys.has(source.key));
+        markSearchTiming("cacheStatusMs", stepStarted);
         const shouldAllowLiveSync =
-          curatedSources.length <= 25
-          || body.sourceSelectionMode === "custom"
-          || !hasSeededCuratedCache;
+          !isBroadSourceSearch
+          && (
+            curatedSources.length <= 25
+            || body.sourceSelectionMode === "custom"
+            || !hasSeededCuratedCache
+          );
         let completedSources = 0;
         let failedSources = 0;
         let cachedSources = 0;
         let liveSources = 0;
         let fallbackSources = 0;
-        const liveSourceResults = await loadSourceResultsForSearch(curatedSources, filters, {
+        stepStarted = Date.now();
+        const liveSourceResults = !shouldAllowLiveSync && curatedSources.length > 0
+          ? loadCachedSourceResultsForSearch(curatedSources, filters)
+          : await loadSourceResultsForSearch(curatedSources, filters, {
             allowSync: shouldAllowLiveSync,
             maxDurationMs: shouldAllowLiveSync ? 15000 : 6000,
             onSourceComplete: ({ result }) => {
@@ -494,12 +517,20 @@ const server = createServer(async (request, response) => {
             });
           },
         });
+        if (!shouldAllowLiveSync && curatedSources.length > 0) {
+          completedSources = curatedSources.length;
+          cachedSources = curatedSources.length;
+          failedSources = 0;
+        }
+        markSearchTiming("curatedCacheReadMs", stepStarted);
           if (!shouldAllowLiveSync && curatedSources.length > 0) {
             void ensureSourcesCached(curatedSources, filters).catch(() => {});
           }
+          stepStarted = Date.now();
           const generatedInventoryResult = generatedInventorySources.length > 0
             ? loadGeneratedInventorySearchResult(generatedInventorySources, filters)
             : null;
+          markSearchTiming("generatedCacheReadMs", stepStarted);
 
       if (generatedInventoryResult) {
         completedSources += 1;
@@ -525,6 +556,7 @@ const server = createServer(async (request, response) => {
       const sourceResultsOverride = generatedInventoryResult
         ? [...liveSourceResults, generatedInventoryResult]
         : liveSourceResults;
+      const useFastCachedSearch = !shouldAllowLiveSync;
 
       if (searchRequestId) {
         updateTrackedSearch(searchRequestId, {
@@ -540,15 +572,33 @@ const server = createServer(async (request, response) => {
         });
       }
 
+      stepStarted = Date.now();
       const result = await searchJobs({
         sources,
         filters,
         sourceResultsOverride,
+        skipDescriptionEnrichment: useFastCachedSearch,
       });
+      markSearchTiming("filterAndBuildMs", stepStarted);
 
+      stepStarted = Date.now();
       if (isWebRepostLookupConfigured()) {
         await enrichJobsWithWebRepostSignals(result.jobs);
       }
+      markSearchTiming("repostEnrichmentMs", stepStarted);
+
+      result.meta = {
+        ...result.meta,
+        timings: {
+          ...searchTimings,
+          totalBeforeSerializeMs: Date.now() - searchStartedAt,
+        },
+        candidateRows: sourceResultsOverride.reduce((total, sourceResult) => total + (sourceResult.jobs?.length || 0), 0),
+        generatedCandidateRows: generatedInventoryResult?.jobs?.length || 0,
+        curatedCandidateRows: liveSourceResults.reduce((total, sourceResult) => total + (sourceResult.jobs?.length || 0), 0),
+        fastCachedSearch: useFastCachedSearch,
+      };
+      trimSearchResultPayload(result);
 
       if (searchRequestId) {
         completeTrackedSearch(searchRequestId, {
@@ -578,6 +628,10 @@ const server = createServer(async (request, response) => {
           jobs: result.jobs.length,
           failedSources: result.meta.failedSources,
           searchRequestId,
+          timings: result.meta.timings,
+          candidateRows: result.meta.candidateRows,
+          generatedCandidateRows: result.meta.generatedCandidateRows,
+          curatedCandidateRows: result.meta.curatedCandidateRows,
         },
       });
     }
@@ -867,14 +921,53 @@ function normalizePublicPath(url) {
 }
 
 function sendJson(response, status, payload, requestMeta = null) {
+  let serializedPayload = JSON.stringify(payload);
+  if (payload?.meta && typeof payload.meta === "object" && !payload.meta.payloadBytes) {
+    payload.meta.payloadBytes = Buffer.byteLength(serializedPayload);
+    serializedPayload = JSON.stringify(payload);
+  }
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store, no-cache, must-revalidate",
     Pragma: "no-cache",
     Expires: "0",
   });
-  response.end(JSON.stringify(payload));
+  response.end(serializedPayload);
   logRequest(requestMeta, status, payload);
+}
+
+function trimSearchResultPayload(result) {
+  if (!result || typeof result !== "object") {
+    return result;
+  }
+
+  for (const key of ["jobs", "unknownDateJobs", "unknownLocationJobs", "confirmedUsJobs", "nonUsDroppedJobs"]) {
+    if (!Array.isArray(result[key])) {
+      continue;
+    }
+    result[key] = result[key].map(trimJobPayloadText);
+  }
+  return result;
+}
+
+function trimJobPayloadText(job) {
+  if (!job || typeof job !== "object") {
+    return job;
+  }
+
+  return {
+    ...job,
+    descriptionSnippet: limitPayloadText(job.descriptionSnippet, 900),
+    searchText: limitPayloadText(job.searchText, 1600),
+  };
+}
+
+function limitPayloadText(value, maxLength) {
+  const text = String(value || "").trim();
+  if (!text || text.length <= maxLength) {
+    return text || null;
+  }
+  return `${text.slice(0, maxLength).trim()}...`;
 }
 
 function sendBinary(response, status, payload, headers = {}) {

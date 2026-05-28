@@ -516,13 +516,20 @@ function humanizeCompanySlug(value) {
 export function deriveLocationMetadata(job = {}) {
   const existingLocation = cleanText(job.locationLabel || "");
   const existingRawLocation = cleanText(job.rawLocationText || "");
-  const combinedText = cleanText([
-    job.title,
-    job.locationLabel,
-    job.rawLocationText,
-    job.searchText,
-    job.descriptionSnippet,
-  ].filter(Boolean).join(" \n "));
+  let combinedText = null;
+  const getCombinedText = () => {
+    if (combinedText !== null) {
+      return combinedText;
+    }
+    combinedText = cleanText([
+      job.title,
+      job.locationLabel,
+      job.rawLocationText,
+      job.searchText,
+      job.descriptionSnippet,
+    ].filter(Boolean).join(" \n "));
+    return combinedText;
+  };
 
   const hasUsableLocation = existingLocation
     && !["unspecified", "n/a"].includes(existingLocation.toLowerCase());
@@ -533,10 +540,12 @@ export function deriveLocationMetadata(job = {}) {
     fragment = existingRawLocation;
   }
   if (!fragment) {
-    fragment = extractLocationFragment(job.title) || extractLocationFragment(combinedText);
+    fragment = extractLocationFragment(job.title) || extractLocationFragment(getCombinedText());
   }
 
-  const specificFragment = extractLocationFragment(job.title) || extractLocationFragment(combinedText);
+  const specificFragment = hasGenericLocation
+    ? extractLocationFragment(job.title) || extractLocationFragment(getCombinedText())
+    : null;
   if (hasGenericLocation && specificFragment) {
     fragment = specificFragment;
   }

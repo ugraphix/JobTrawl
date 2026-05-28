@@ -29,6 +29,11 @@ const MAX_BROAD_SEARCH_DESCRIPTION_ENRICH_JOBS = 12;
 const DESCRIPTION_ENRICH_TIMEOUT_MS = 3500;
 
 export async function searchJobs({ sources, filters, sourceResultsOverride, skipDescriptionEnrichment = false }) {
+  const timings = {};
+  const markTiming = (name, startedAt) => {
+    timings[name] = Date.now() - startedAt;
+  };
+  let stepStartedAt = Date.now();
   const sourceResults = sourceResultsOverride || await Promise.all(
     sources.map(async (source) => {
       try {
@@ -39,6 +44,7 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
       }
     })
   );
+  markTiming("sourceResultsMs", stepStartedAt);
 
   const includedCompanies = new Set((filters.includedCompanies || []).map((name) => normalizeText(name)));
   const excludedCompanies = new Set((filters.excludedCompanies || []).map((name) => name.toLowerCase()));
@@ -53,6 +59,7 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
   const unknownLocationMatches = [];
   const nonUsDroppedJobs = [];
 
+  stepStartedAt = Date.now();
   for (const result of sourceResults) {
     for (const job of result.jobs) {
       const arrangement = normalizeWorkArrangement(job.workArrangement);
@@ -173,12 +180,17 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
       }
     }
   }
+  markTiming("initialFilterMs", stepStartedAt);
 
+  stepStartedAt = Date.now();
   if (!skipDescriptionEnrichment) {
     await enrichMissingDescriptions(jobs, filters);
     await enrichMissingDescriptions(unknownDateMatches, filters);
     await enrichMissingDescriptions(unknownLocationMatches, filters);
   }
+  markTiming("descriptionEnrichmentMs", stepStartedAt);
+
+  stepStartedAt = Date.now();
   reconcileUnknownDateMatches(jobs, unknownDateMatches, filters);
   removeExpiredJobs(jobs);
   removeExpiredJobs(unknownDateMatches);
@@ -191,7 +203,9 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
   backfillCompensation(unknownLocationMatches);
   filterUnknownDateMatches(unknownDateMatches, filters);
   filterUnknownLocationMatches(unknownLocationMatches, filters);
+  markTiming("metadataRefreshMs", stepStartedAt);
 
+  stepStartedAt = Date.now();
   const annotated = annotatePossibleDuplicates(jobs);
   const annotatedUnknownDate = annotatePossibleDuplicates(unknownDateMatches);
   const annotatedUnknownLocation = annotatePossibleDuplicates(unknownLocationMatches);
@@ -214,6 +228,7 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
     aggregatedUnknownLocation.sort(sortJobs),
     buildSearchDedupKey
   ).filter((job) => !knownResultKeys.has(buildSearchDedupKey(job)));
+  markTiming("dedupeAndAggregateMs", stepStartedAt);
 
   return {
     jobs: deduped,
@@ -246,6 +261,7 @@ export async function searchJobs({ sources, filters, sourceResultsOverride, skip
       confirmedUsCount: filters.usOnly ? deduped.length : 0,
       unknownLocationCount: dedupedUnknownLocation.length,
       nonUsDroppedCount: nonUsDroppedJobs.length,
+      searchTimings: timings,
     },
   };
 }
