@@ -949,7 +949,8 @@ export function isLikelyJobPosting(job) {
 
   const blockedTitlePatterns = [
     /\b(applicant login|employee login|forgot password)\b/i,
-    /\b(benefits|blog|cookie|culture|events|faqs|locations|saved jobs|team members?)\b/i,
+    /^(our\s+)?benefits(\s*(overview|&\s*perks|and\s+perks|perks))?$/i,
+    /\b(blog|cookie|culture|events|faqs|locations|saved jobs|team members?)\b/i,
     /\b(eeo statement|accommodation request|physicians and providers|view my profile)\b/i,
     /\b(preferences|privacy policy|privacy choices|terms of use)\b/i,
     /\b(search|view)\b.*\b(jobs|careers)\b/i,
