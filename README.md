@@ -9,6 +9,28 @@ It is designed for two kinds of coverage:
 
 The result is a local search console that can cover both carefully chosen employers and much broader ATS ecosystems.
 
+## Quick start
+
+```powershell
+git clone https://github.com/ugraphix/JobTrawl.git
+cd JobTrawl
+npm install
+npm start
+```
+
+Then open:
+
+- [http://localhost:3001](http://localhost:3001)
+
+For better first-search results, warm a small daily cache after the app is installed:
+
+```powershell
+npm run refresh:plan
+npm run refresh:daily
+```
+
+The refresh command writes cache files under `data/`. Those files are local-only and are intentionally not committed.
+
 ## Preview
 
 ![JobTrawl new features](docs/JobTrawl_NewFeatures.png)
@@ -22,9 +44,11 @@ The result is a local search console that can cover both carefully chosen employ
 - Falls back to parsing public employer career pages when there is no clean public API
 - Normalizes results from different systems into one shared job shape
 - Caches fetched jobs locally in SQLite for faster repeat searches
+- Returns cached search results quickly and keeps live cache refreshes as an explicit maintenance step
 - Deduplicates the same job across overlapping sources by company + job ID / URL
 - Returns partial results if some sources fail or time out
 - Lets you narrow results by title, date, work arrangement, location, excluded companies, specific companies, or ATS/API provider type
+- Separates verified U.S. jobs, unknown-location jobs, and explicit non-U.S. drops so U.S.-only searches stay honest
 - Preserves jobs with missing posted dates in a separate expandable section instead of inflating strict date-filter counts
 - Flags real reposted jobs when posting history suggests they reappeared or refreshed
 - Includes an application tracker that saves files locally, generates listing PDFs, and syncs a local Excel workbook
@@ -36,9 +60,10 @@ At a high level, a search in JobTrawl works like this:
 1. JobTrawl loads its configured job sources and location lists.
 2. When you run a search, it chooses which sources to search based on your settings:
    all default sources, specific companies, or selected ATS/API provider families.
-3. It checks the local cache first so it does not have to refetch every source every time.
-4. If fresh cached results are not available, it fetches jobs through the right adapter for that source.
-5. It converts all jobs into one shared format, applies your filters, removes duplicates, sorts the results, and shows them in one list.
+3. It reads matching jobs from the local cache first.
+4. It uses SQL keyword and recency prefilters for large generated inventories so broad searches do not scan every cached row in JavaScript.
+5. It converts all jobs into one shared format, applies your filters, separates verified U.S. / unknown-location / explicit non-U.S. buckets, removes duplicates, sorts the results, and shows them in one list.
+6. Live cache refreshes are handled through the refresh scripts instead of blocking the first search response.
 
 For most users, the important idea is simple: JobTrawl pulls direct listings from many company-controlled sources, standardizes them, and gives you one place to search them.
 
@@ -48,7 +73,7 @@ For most users, the important idea is simple: JobTrawl pulls direct listings fro
 flowchart TD
     A["Open JobTrawl<br/>in your browser"] --> B["Run bootstrap request<br/>for startup data"]
     B --> C["Load configured sources<br/>and location lists"]
-    C --> D["Build filters, companies,<br/>and source options"]
+    C --> D["Build filters, default recency,<br/>companies, and source options"]
     D --> E["Show the search form<br/>in the browser"]
 
     E --> F["Submit a search"]
@@ -60,36 +85,65 @@ flowchart TD
     I --> L["Check the local cache<br/>first"]
     J --> L
     K --> L
-    L --> M{"Is fresh cached<br/>data available?"}
+    L --> M{"Which cache path<br/>is needed?"}
 
-    M -->|Yes| N["Read jobs from<br/>local cache"]
-    M -->|No| O{"Is this a generated<br/>inventory source?"}
-    O -->|Yes| P["Keyword-prefilter generated<br/>inventory and load cached jobs"]
-    O -->|No| Q["Use cached jobs first<br/>and refresh curated sources<br/>in the background when needed"]
+    M -->|Curated sources| N["Read scoped cached jobs<br/>for selected sources"]
+    M -->|Generated inventory| P["SQL prefilter by source,<br/>keyword, and recency"]
+    M -->|No useful cache| Q["Return cache-backed results<br/>without blocking on live fetch"]
 
-    Q --> R{"Does the source use<br/>an API or a career page?"}
-    R -->|API| S["Call the provider endpoint<br/>and map the response"]
-    R -->|Career page| T["Fetch public page data<br/>and extract jobs"]
+    Q --> R["Use refresh scripts for<br/>explicit cache warming"]
+    R --> S{"Does each source use<br/>an API or a career page?"}
+    S -->|API| T["Call provider endpoint<br/>during refresh"]
+    S -->|Career page| U["Fetch public page data<br/>during refresh"]
 
-    S --> U["Normalize jobs into<br/>one shared format"]
-    T --> U
-    U --> V["Write jobs back to<br/>local cache"]
-    N --> W["Apply the user's<br/>search filters"]
-    P --> W
-    V --> W
-    W --> X["Split unknown-date jobs<br/>into a separate bucket"]
-    X --> Y["Remove duplicate<br/>job listings"]
-    Y --> Z["Sort by the newest<br/>known date"]
-    Z --> AA["Return results and<br/>source health data"]
+    T --> V["Normalize jobs into<br/>one shared format"]
+    U --> V
+    V --> W["Write jobs back to<br/>local cache"]
 
-    AA --> AB["Save a job to the<br/>application tracker"]
-    AB --> AC["Store row data locally<br/>and create/update job folder"]
-    AC --> AD["Upload resume, cover letter,<br/>and listing PDF copies"]
-    AD --> AE["Sync tracker rows into the<br/>local Excel workbook"]
-    AE --> AF["Open workbook export with<br/>file hyperlinks for saved assets"]
+    N --> X["Apply keyword, date,<br/>quality, and arrangement filters"]
+    P --> X
+    W --> X
+    X --> Y{"U.S. jobs only?"}
+    Y -->|Yes| Z["Split into verified U.S.,<br/>unknown-location, and non-U.S. dropped"]
+    Y -->|No| AA["Keep matched jobs<br/>with location metadata"]
+    Z --> AB["Remove duplicate<br/>job listings"]
+    AA --> AB
+    AB --> AC["Sort by newest<br/>known date"]
+    AC --> AD["Return result cards,<br/>counts, and debug timing"]
+
+    AD --> AE["Save a job to the<br/>application tracker"]
+    AE --> AF["Store row data locally<br/>and create/update job folder"]
+    AF --> AG["Upload resume, cover letter,<br/>and listing PDF copies"]
+    AG --> AH["Sync tracker rows into the<br/>local Excel workbook"]
+    AH --> AI["Open workbook export with<br/>file hyperlinks for saved assets"]
 ```
 
-The chart is intentionally simplified so it stays readable in GitHub's Mermaid viewer. The sections below explain the same flow in more detail.
+The search path is intentionally cache-first. Normal searches should not wait for live ATS fetches. To update the cache, run one of the refresh commands described below.
+
+### Refresh flow
+
+```mermaid
+flowchart TD
+    A["Run refresh plan<br/>npm run refresh:plan"] --> B["Print planned daily batches<br/>without fetching jobs"]
+    B --> C{"Ready to refresh?"}
+    C -->|Yes| D["Run daily refresh<br/>npm run refresh:daily"]
+    C -->|No| E["Stop with no cache changes"]
+
+    D --> F["Greenhouse batch"]
+    F --> G["Getro batch"]
+    G --> H["CareerPuck batch"]
+    H --> I["Lever batch"]
+    I --> J{"Timeout or failure<br/>rate too high?"}
+    J -->|Yes| K["Stop early and write<br/>local report"]
+    J -->|No| L["Run validation searches"]
+    K --> M["Write local-only report<br/>data/daily-cache-refresh-report.json"]
+    L --> M
+    M --> N["Review counts and provider<br/>breakdown in terminal"]
+```
+
+Daily refresh is deliberately small. Weekly and targeted plans are available, but they are dry-run only unless called through the wrapper with `--run`.
+
+The charts are intentionally simplified so they stay readable in GitHub's Mermaid viewer. The sections below explain the same flows in more detail.
 
 ## Filters
 
@@ -112,14 +166,19 @@ The UI in `public/index.html` and `public/app.js` supports these filters:
 ### How the filters behave
 
 - Keyword matching can run in strict or loose mode.
+- Loose keyword search is the default.
 - Loose matching expands many common role aliases. For example, a query like `product manager` can also match nearby role variants defined in `src/lib/filters.js`.
+- The default posted-within filter is `Last 7 days`. `Last 24 hours` is still available, but it is intentionally stricter and may return few or no verified results.
 - Recency uses `postedAt` when available.
 - Strict recency counts only jobs with known dates in the requested window.
 - Jobs with unknown dates can still appear in the expandable `unknown dates` section at the bottom of results.
 - Arrangement filtering normalizes values to `remote`, `hybrid`, `onsite`, or `unknown`.
 - Location filtering is text-based unless the distance filter is active.
 - The distance filter uses browser coordinates plus a built-in location alias map for supported metros.
-- `U.S. jobs only` keeps postings that clearly look U.S.-based and can optionally keep unknown-location jobs in a separate section.
+- `U.S. jobs only` keeps postings that clearly look U.S.-based.
+- Unknown-location matches remain separate from the verified U.S. headline count.
+- Explicit non-U.S. locations are dropped from U.S.-only results.
+- The app does not infer U.S. location from employer headquarters or company identity.
 - Customized search can either filter to an included company list or limit the search to selected ATS/API provider families.
 - Excluded companies are filtered out after normalization.
 - Results are deduplicated across overlapping sources, primarily by company plus job ID or normalized apply URL.
@@ -250,11 +309,40 @@ Cache behavior:
 - generated inventory sources are included by default only after they have been synced locally
 - large generated ATS inventories are keyword-prefiltered before cached postings are loaded
 - expired postings are pruned automatically
+- normal `/api/search` responses do not block on live ATS fetching
 
 There are also API endpoints for cache status and manual sync:
 
 - `GET /api/cache/status`
 - `POST /api/cache/sync`
+
+### Refresh commands
+
+The safest way to refresh data is through the wrapper script in `scripts/run-daily-cache-refresh.mjs`.
+
+Dry-run plans:
+
+```powershell
+npm run refresh:plan
+npm run refresh:weekly-plan
+npm run refresh:targeted-plan
+```
+
+Live daily refresh:
+
+```powershell
+npm run refresh:daily
+```
+
+What the daily refresh does:
+
+- runs a small stable-provider sequence: Greenhouse, Getro, CareerPuck, and Lever
+- runs batches one at a time, never in parallel
+- stops early if timeout or failure rates cross safety thresholds
+- writes a local report to `data/daily-cache-refresh-report.json`
+- runs validation searches and prints counts after a real run
+
+The weekly and targeted profiles are available through the wrapper script, but the package scripts expose only dry-run planning for them. This avoids accidentally launching a long or targeted refresh when you only meant to inspect the plan.
 
 ## Source configuration
 
@@ -265,16 +353,18 @@ JobTrawl merges two source files:
 
 On the current branch, the repo contains:
 
-- about `120` curated sources
+- about `215` curated sources
 - `10k+` generated ATS sources
 
-Generated inventory is created from the imported reference database using:
+Generated inventory is already committed in sanitized JSON form. If you are maintaining the project and need to rebuild it from an imported reference database, use:
 
 - `npm run import:generated-ats`
 
-and can be synced into the local cache in batches with:
+and it can be synced into the local cache in batches with:
 
 - `npm run sync:generated-ats`
+
+Most new users do not need to run either import command. Start with `npm install`, `npm start`, and optionally `npm run refresh:daily`.
 
 ## Supported provider families
 
@@ -345,6 +435,7 @@ If you're not technical, the easiest way to think about setup is:
 4. run one install command
 5. run one start command
 6. open the local web address in your browser
+7. optionally run a daily cache refresh for better first-search results
 
 ### Step 1: Install Node.js
 
@@ -410,7 +501,23 @@ npm.cmd install
 
 Wait until the install finishes.
 
-### Step 4: Start JobTrawl
+### Step 4: Check the refresh plan
+
+This step is optional, but recommended for a first-time install:
+
+```powershell
+npm run refresh:plan
+```
+
+If PowerShell blocks `npm`, use:
+
+```powershell
+npm.cmd run refresh:plan
+```
+
+This only prints the planned refresh batches. It does not fetch jobs or write cache data.
+
+### Step 5: Start JobTrawl
 
 Run:
 
@@ -430,7 +537,25 @@ When it starts correctly, JobTrawl runs on:
 
 Open that address in your web browser.
 
-### Step 5: If it does not open
+### Step 6: Refresh the local cache
+
+The app will open without a warmed cache, but results are much better after a refresh.
+
+In a second terminal window, from inside the JobTrawl folder, run:
+
+```powershell
+npm run refresh:daily
+```
+
+If PowerShell blocks `npm`, use:
+
+```powershell
+npm.cmd run refresh:daily
+```
+
+This fetches a controlled set of stable providers and writes local cache files under `data/`. It can take several minutes.
+
+### Step 7: If it does not open
 
 - Make sure you are still inside the JobTrawl folder before running commands.
 - Make sure Node.js installed successfully by running `node -v`.
@@ -438,6 +563,7 @@ Open that address in your web browser.
 - If `http://localhost:3001` does not load, check the terminal window for an error message.
 - If port `3001` is already being used by another app, stop that app or change the `PORT` environment variable before starting JobTrawl.
 - If you're on an older version of Node.js, upgrade to Node `22` or newer and try again.
+- If searches return very few jobs on a fresh install, run `npm run refresh:daily` and search again.
 
 ### Development mode
 
@@ -455,12 +581,13 @@ npm.cmd run dev
 
 1. Start the app with `npm start`
 2. Open `http://localhost:3001`
-3. Enter a keyword or role title
-4. Choose recency, arrangement, and location filters
-5. Optionally customize the search to specific companies or ATS/API source types
-6. Optionally exclude companies
-7. Run the search
-8. Open the direct application link from a result card
+3. Optionally run `npm run refresh:daily` in a second terminal to warm the cache
+4. Enter a keyword or role title
+5. Choose recency, arrangement, and location filters
+6. Optionally customize the search to specific companies or ATS/API source types
+7. Optionally exclude companies
+8. Run the search
+9. Open the direct application link from a result card
 
 ## Configuring your own sources
 
@@ -521,6 +648,38 @@ src/lib/filters.js          Keyword, recency, arrangement, and location filters
 src/lib/cache-db.js         Local cache layer
 src/lib/adapters/           ATS and career-page adapters
 ```
+
+## Privacy and local data
+
+JobTrawl is local-first. It does not require an account or hosted backend.
+
+Local-only files include:
+
+- cache databases under `data/`
+- refresh reports under `data/`
+- application tracker files under `data/jobs/`
+- generated workbook exports such as `data/job-applications.xlsx`
+- local retry/source-key files used during audits or targeted warms
+
+These files are intentionally ignored by Git. Do not commit them if you fork or contribute to the project.
+
+The tracked repository should contain source code, configuration, public screenshots, and docs only. It should not contain personal resumes, cover letters, cache databases, benchmark reports, local progress files, API keys, or private job-application artifacts.
+
+## Fresh-clone checklist
+
+Before sharing the repo with someone else, this is the quick sanity check:
+
+```powershell
+git status --short --branch
+npm install
+npm start
+```
+
+Then open:
+
+- [http://localhost:3001](http://localhost:3001)
+
+For a stronger check, clone into a temporary folder and run the same install/start flow there. A fresh clone should start without any local `data/` cache files.
 
 ## Notes and tradeoffs
 
